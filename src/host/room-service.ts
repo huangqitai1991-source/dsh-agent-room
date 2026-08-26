@@ -1,0 +1,672 @@
+/**
+ * dsh-agent-room — RoomService.
+ *
+ * Authoritative owner-side logic: identity, room lifecycle, join authorization,
+ * chat stream, task board, and the judging model (controller / auto).
+ * The host wires this into DSH; the PeerServer broadcasts its events to member
+ * sockets; tools call into it directly.
+ */
+
+import { EventEmitter } from "node:events";
+import type {
+  AgentIdentity,
+  ChatMessage,
+  JoinedRoomRecord,
+  Member,
+  RoleKey,
+  Room,
+  RoomSettings,
+  SystemEvent,
+  Task,
+  TaskHandoff,
+} from "../types.js";
+import { Persistence } from "./persistence.js";
+import { hashPassword, nowIso, randomToken, uuidv7, verifyPassword } from "./util.js";
+import { ZERO_WEIGHT_CAPABILITIES } from "./catalog.js";
+
+export interface CreateRoomInput {
+  title: string;
+  type: "persistent" | "temporary";
+  settings?: Partial<RoomSettings> & { password?: string };
+}
+
+export interface RoomServiceEvents {
+  chat: (roomId: string, message: ChatMessage) => void;
+  task: (roomId: string, task: Task) => void;
+  taskRemoved: (roomId: string, taskId: string) => void;
+  system: (roomId: string, event: SystemEvent) => void;
+  members: (roomId: string, members: Member[]) => void;
+  roomState: (roomId: string, status: Room["status"]) => void;
+}
+
+export interface RoomServiceOptions {
+  dataDir: string;
+  /** Callback so the host can lazily start the peer server on first room. */
+  onNeedServer?: () => Promise<string | undefined>;
+}
+
+/** Error carrying a stable code for tool/HTTP layers to map. */
+export class RoomError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export class RoomService extends EventEmitter {
+  private readonly persistence: Persistence;
+  private readonly onNeedServer?: () => Promise<string | undefined>;
+  private identity: AgentIdentity | null = null;
+  /** Rooms owned by this node (authoritative), keyed by roomId. */
+  private readonly owned = new Map<string, Room>();
+  /** Session tokens for owned rooms: roomId -> agentId -> token. */
+  private readonly tokens = new Map<string, Map<string, string>>();
+  /** Per-room message sequence counters. */
+  private readonly seqs = new Map<string, number>();
+  /** Recent rooms this node joined or created. */
+  private joined: JoinedRoomRecord[] = [];
+
+  constructor(options: RoomServiceOptions) {
+    super();
+    this.persistence = new Persistence(options.dataDir);
+    this.onNeedServer = options.onNeedServer;
+  }
+
+  override on<K extends keyof RoomServiceEvents>(event: K, listener: RoomServiceEvents[K]): this {
+    return super.on(event, listener);
+  }
+
+  override emit<K extends keyof RoomServiceEvents>(event: K, ...args: Parameters<RoomServiceEvents[K]>): boolean {
+    return super.emit(event, ...args);
+  }
+
+  /* ------------------------------ identity ----------------------------- */
+
+  async ensureIdentity(): Promise<AgentIdentity> {
+    if (this.identity) return this.identity;
+    const existing = await this.persistence.loadIdentity();
+    if (existing) {
+      this.identity = existing;
+      return existing;
+    }
+    const fresh: AgentIdentity = {
+      agentId: uuidv7(),
+      nickname: defaultNickname(),
+      capabilities: [],
+      createdAt: nowIso(),
+    };
+    await this.persistence.saveIdentity(fresh);
+    this.identity = fresh;
+    return fresh;
+  }
+
+  getIdentity(): AgentIdentity | null {
+    return this.identity;
+  }
+
+  async updateProfile(patch: Partial<Pick<AgentIdentity, "nickname" | "bio">> & { capabilities?: string[] }): Promise<AgentIdentity> {
+    const id = await this.ensureIdentity();
+    if (patch.nickname !== undefined) id.nickname = patch.nickname;
+    if (patch.bio !== undefined) id.bio = patch.bio;
+    if (patch.capabilities !== undefined) id.capabilities = [...new Set(patch.capabilities)];
+    await this.persistence.saveIdentity(id);
+    return id;
+  }
+
+  /** Merge auto-collected capability names (skills/tools) into identity. */
+  async mergeCapabilities(names: string[]): Promise<AgentIdentity> {
+    const id = await this.ensureIdentity();
+    let changed = false;
+    for (const name of names) {
+      if (name && !id.capabilities.includes(name)) {
+        id.capabilities.push(name);
+        changed = true;
+      }
+    }
+    if (changed) await this.persistence.saveIdentity(id);
+    return id;
+  }
+
+  /* ------------------------------ boot/restore ------------------------- */
+
+  async boot(): Promise<void> {
+    const identity = await this.ensureIdentity();
+    this.joined = await this.persistence.loadJoined();
+    const rooms = await this.persistence.loadPersistentRooms();
+    for (const room of rooms) {
+      if (room.ownerAgentId !== identity.agentId) continue;
+      if (room.status === "suspended") room.status = "open";
+      this.owned.set(room.roomId, room);
+      // Restore the message seq counter from persisted history so a restart
+      // never reuses seq numbers — the member client dedups by seq, and reused
+      // numbers would make it silently drop new messages.
+      this.seqs.set(room.roomId, await this.persistence.loadMaxSeq(room.roomId));
+      this.emit("system", room.roomId, {
+        kind: "room-state",
+        text: `房间已恢复开放（节点重启）`,
+        ts: nowIso(),
+        by: identity.agentId,
+      });
+      this.emit("roomState", room.roomId, room.status);
+    }
+  }
+
+  /* ------------------------------ owned rooms -------------------------- */
+
+  async createRoom(input: CreateRoomInput): Promise<Room> {
+    const identity = await this.ensureIdentity();
+    const address = this.onNeedServer ? await this.onNeedServer() : undefined;
+    const now = nowIso();
+    const room: Room = {
+      roomId: uuidv7(),
+      title: input.title,
+      type: input.type,
+      ownerAgentId: identity.agentId,
+      controllerAgentId: identity.agentId,
+      createdAt: now,
+      settings: {
+        authMode: input.settings?.authMode ?? "open",
+        passwordHash: input.settings?.password ? hashPassword(input.settings.password) : input.settings?.passwordHash,
+        autoMode: input.settings?.autoMode ?? false,
+        maxMembers: input.settings?.maxMembers ?? 50,
+        allowHumanTakeover: input.settings?.allowHumanTakeover ?? true,
+      },
+      members: [{ agentId: identity.agentId, nickname: identity.nickname, role: "owner", roles: ["controller"], joinedAt: now }],
+      tasks: [],
+      status: "open",
+      serverAddress: address,
+    };
+    this.owned.set(room.roomId, room);
+    this.seqs.set(room.roomId, 0);
+    this.tokens.set(room.roomId, new Map([[identity.agentId, randomToken()]]));
+    await this.recordJoined(room.roomId, address ?? "", room.title);
+    if (room.type === "persistent") await this.persistence.saveRoom(room);
+    this.emit("roomState", room.roomId, "open");
+    return room;
+  }
+
+  async closeRoom(roomId: string): Promise<void> {
+    const room = this.requireOwned(roomId);
+    room.status = "closed";
+    this.emit("system", roomId, { kind: "room-state", text: "房间已关闭", ts: nowIso() });
+    this.emit("roomState", roomId, "closed");
+    if (room.type === "persistent") await this.persistence.saveRoom(room);
+    else await this.persistence.deleteRoom(roomId);
+  }
+
+  async destroyRoom(roomId: string): Promise<void> {
+    const room = this.requireOwned(roomId);
+    this.owned.delete(roomId);
+    this.seqs.delete(roomId);
+    this.tokens.delete(roomId);
+    await this.persistence.deleteRoom(roomId);
+    this.joined = this.joined.filter((r) => r.roomId !== roomId);
+    await this.persistence.saveJoined(this.joined);
+  }
+
+  listOwnedRooms(): Room[] {
+    return [...this.owned.values()];
+  }
+
+  listJoinedRooms(): JoinedRoomRecord[] {
+    return [...this.joined];
+  }
+
+  getOwnedRoom(roomId: string): Room | undefined {
+    return this.owned.get(roomId);
+  }
+
+  private requireOwned(roomId: string): Room {
+    const room = this.owned.get(roomId);
+    if (!room) throw new RoomError("room-not-found", `房间不存在: ${roomId}`);
+    return room;
+  }
+
+  /* ------------------------------ auth/join ---------------------------- */
+
+  /**
+   * Join an owned room. Returns the session token on success.
+   * Password rooms require the correct password; open rooms admit directly.
+   */
+  joinOwnedRoom(
+    roomId: string,
+    agent: AgentIdentity,
+    options: { password?: string },
+  ): { token: string } {
+    const room = this.requireOwned(roomId);
+    if (room.status !== "open") throw new RoomError("room-closed", "房间未开放");
+    if (room.members.length >= room.settings.maxMembers)
+      throw new RoomError("room-full", "房间人数已满");
+    if (room.members.some((m) => m.agentId === agent.agentId)) {
+      // Idempotent rejoin: the member already exists (e.g. their node restarted
+      // and dropped the socket). Issue a fresh token instead of rejecting, so
+      // the client can reconnect after any restart.
+      return this.admit(room, agent, true);
+    }
+
+    if (room.settings.authMode === "password") {
+      if (!room.settings.passwordHash || !options.password || !verifyPassword(options.password, room.settings.passwordHash)) {
+        throw new RoomError("wrong-password", "密码错误");
+      }
+    }
+    return this.admit(room, agent);
+  }
+
+  private admit(room: Room, agent: AgentIdentity, alreadyMember = false): { token: string } {
+    const now = nowIso();
+    if (!alreadyMember) {
+      room.members.push({
+        agentId: agent.agentId,
+        nickname: agent.nickname,
+        role: "member",
+        roles: ["observer"],
+        joinedAt: now,
+        capabilities: agent.capabilities,
+      });
+    } else {
+      const member = room.members.find((m) => m.agentId === agent.agentId);
+      if (member) member.nickname = agent.nickname;
+    }
+    const token = randomToken();
+    const roomTokens = this.tokens.get(room.roomId) ?? new Map();
+    roomTokens.set(agent.agentId, token);
+    this.tokens.set(room.roomId, roomTokens);
+    if (room.type === "persistent") void this.persistence.saveRoom(room);
+    this.emit("members", room.roomId, room.members);
+    this.emit("system", room.roomId, { kind: "member-joined", text: `${agent.nickname} 加入了房间`, ts: now, by: agent.agentId });
+    return { token };
+  }
+
+  /** Validate a ws session token for a member of an owned room. */
+  validateToken(roomId: string, agentId: string, token: string): boolean {
+    const roomTokens = this.tokens.get(roomId);
+    return roomTokens?.get(agentId) === token;
+  }
+
+  async removeMember(roomId: string, agentId: string): Promise<void> {
+    const room = this.requireOwned(roomId);
+    const member = room.members.find((m) => m.agentId === agentId);
+    if (!member) return;
+    room.members = room.members.filter((m) => m.agentId !== agentId);
+    this.tokens.get(roomId)?.delete(agentId);
+    if (room.type === "persistent") await this.persistence.saveRoom(room);
+    this.emit("members", roomId, room.members);
+    this.emit("system", roomId, { kind: "member-left", text: `${member.nickname} 离开了房间`, ts: nowIso(), by: agentId });
+  }
+
+  /* ------------------------------ settings ----------------------------- */
+
+  async updateSettings(roomId: string, patch: Partial<RoomSettings> & { password?: string }): Promise<Room> {
+    const room = this.requireOwned(roomId);
+    const s = room.settings;
+    if (patch.authMode !== undefined) s.authMode = patch.authMode;
+    if (patch.password !== undefined && patch.password.length > 0) s.passwordHash = hashPassword(patch.password);
+    if (patch.autoMode !== undefined) s.autoMode = patch.autoMode;
+    if (patch.maxMembers !== undefined) s.maxMembers = patch.maxMembers;
+    if (patch.allowHumanTakeover !== undefined) s.allowHumanTakeover = patch.allowHumanTakeover;
+    if (room.type === "persistent") await this.persistence.saveRoom(room);
+    this.emit("system", roomId, { kind: "settings", text: "房间设置已更新", ts: nowIso() });
+    return room;
+  }
+
+  async transferController(roomId: string, toAgentId: string): Promise<Room> {
+    const room = this.requireOwned(roomId);
+    if (!room.members.some((m) => m.agentId === toAgentId))
+      throw new RoomError("not-member", "目标不在房间内");
+    room.controllerAgentId = toAgentId;
+    if (room.type === "persistent") await this.persistence.saveRoom(room);
+    this.emit("system", roomId, { kind: "settings", text: `判定权已转移`, ts: nowIso(), by: toAgentId });
+    return room;
+  }
+
+  /* ------------------------------ chat --------------------------------- */
+
+  async addChatMessage(roomId: string, from: AgentIdentity, input: { text: string; replyTo?: number; mentions?: string[]; human?: boolean }): Promise<ChatMessage> {
+    const room = this.requireOwned(roomId);
+    if (input.text.length === 0) throw new RoomError("empty-message", "消息不能为空");
+    if (input.text.length > 16 * 1024) throw new RoomError("message-too-long", "消息过长");
+    const seq = (this.seqs.get(roomId) ?? 0) + 1;
+    this.seqs.set(roomId, seq);
+    const message: ChatMessage = {
+      seq,
+      from: from.agentId,
+      fromNickname: from.nickname,
+      ts: nowIso(),
+      text: input.text,
+      replyTo: input.replyTo,
+      mentions: input.mentions,
+      human: input.human,
+    };
+    if (room.type === "persistent") await this.persistence.appendMessage(roomId, message);
+    this.trackMessage(roomId, message);
+    this.emit("chat", roomId, message);
+    return message;
+  }
+
+  async recentMessages(roomId: string, limit = 200, before?: number): Promise<ChatMessage[]> {
+    const room = this.requireOwned(roomId);
+    if (room.type === "temporary") {
+      const list = this.memoryMessages.get(roomId) ?? [];
+      const filtered = before === undefined ? list : list.filter((m) => m.seq < before);
+      return filtered.slice(-limit);
+    }
+    return this.persistence.loadRecentMessages(roomId, limit, before);
+  }
+
+  private readonly memoryMessages = new Map<string, ChatMessage[]>();
+  /** Attach a chat message to the in-memory stream (used by PeerServer for temporary rooms). */
+  trackMessage(roomId: string, message: ChatMessage): void {
+    const list = this.memoryMessages.get(roomId) ?? [];
+    list.push(message);
+    if (list.length > 500) list.splice(0, list.length - 500);
+    this.memoryMessages.set(roomId, list);
+  }
+
+  /* ------------------------------ tasks -------------------------------- */
+
+  private requireTask(room: Room, taskId: string): Task {
+    const task = room.tasks.find((t) => t.taskId === taskId);
+    if (!task) throw new RoomError("task-not-found", "任务不存在");
+    return task;
+  }
+
+  private requireMember(room: Room, agentId: string): void {
+    if (!room.members.some((m) => m.agentId === agentId))
+      throw new RoomError("not-member", "不是房间成员");
+  }
+
+  private judgeOf(room: Room, task: Task): string {
+    return task.judge.mode === "auto" ? task.assignee ?? task.createdBy : room.controllerAgentId;
+  }
+
+  createTask(
+    roomId: string,
+    by: AgentIdentity,
+    input: {
+      title: string;
+      description?: string;
+      assignee?: string;
+      claimable?: boolean;
+      requiredCapabilities?: string[];
+      requiredRoles?: RoleKey[];
+      acceptance?: string;
+      judgeMode?: "controller" | "auto";
+    },
+  ): Task {
+    const room = this.requireOwned(roomId);
+    this.requireMember(room, by.agentId);
+    const now = nowIso();
+    const task: Task = {
+      taskId: uuidv7(),
+      title: input.title,
+      description: input.description ?? "",
+      status: "todo",
+      assignee: input.assignee,
+      claimable: input.claimable ?? false,
+      requiredCapabilities: input.requiredCapabilities ?? [],
+      requiredRoles: input.requiredRoles,
+      acceptance: input.acceptance,
+      createdBy: by.agentId,
+      createdAt: now,
+      updatedAt: now,
+      comments: [],
+      judge: {
+        mode: input.judgeMode ?? (room.settings.autoMode ? "auto" : "controller"),
+      },
+    };
+    room.tasks.push(task);
+    if (room.type === "persistent") void this.persistence.saveRoom(room);
+    this.emit("task", roomId, task);
+    return task;
+  }
+
+  assignTask(roomId: string, by: AgentIdentity, taskId: string, assignee: string): Task {
+    const room = this.requireOwned(roomId);
+    this.requireMember(room, by.agentId);
+    if (!room.members.some((m) => m.agentId === assignee)) throw new RoomError("not-member", "被指派者不在房间内");
+    const task = this.requireTask(room, taskId);
+    const creator = task.createdBy === by.agentId;
+    const judge = this.judgeOf(room, task) === by.agentId;
+    const current = task.assignee === by.agentId;
+    if (!creator && !judge && !current && room.controllerAgentId !== by.agentId)
+      throw new RoomError("forbidden", "无权指派该任务");
+    task.assignee = assignee;
+    task.claimable = false;
+    if (task.status === "todo") task.status = "doing";
+    task.updatedAt = nowIso();
+    if (room.type === "persistent") void this.persistence.saveRoom(room);
+    this.emit("task", roomId, task);
+    return task;
+  }
+
+  claimTask(roomId: string, by: AgentIdentity, taskId: string): Task {
+    const room = this.requireOwned(roomId);
+    this.requireMember(room, by.agentId);
+    const task = this.requireTask(room, taskId);
+    if (!task.claimable) throw new RoomError("not-claimable", "该任务不可认领");
+    if (task.assignee && task.assignee !== by.agentId) throw new RoomError("claimed", "任务已被认领");
+    task.assignee = by.agentId;
+    task.claimable = false;
+    task.status = "doing";
+    task.updatedAt = nowIso();
+    if (room.type === "persistent") void this.persistence.saveRoom(room);
+    this.emit("task", roomId, task);
+    return task;
+  }
+
+  commentTask(roomId: string, by: AgentIdentity, taskId: string, text: string): Task {
+    const room = this.requireOwned(roomId);
+    this.requireMember(room, by.agentId);
+    const task = this.requireTask(room, taskId);
+    task.comments.push({ agentId: by.agentId, ts: nowIso(), text });
+    task.updatedAt = nowIso();
+    if (room.type === "persistent") void this.persistence.saveRoom(room);
+    this.emit("task", roomId, task);
+    return task;
+  }
+
+  setTaskStatus(roomId: string, by: AgentIdentity, taskId: string, status: "todo" | "doing"): Task {
+    const room = this.requireOwned(roomId);
+    this.requireMember(room, by.agentId);
+    const task = this.requireTask(room, taskId);
+    const involved = task.assignee === by.agentId || task.createdBy === by.agentId || room.controllerAgentId === by.agentId;
+    if (!involved) throw new RoomError("forbidden", "无权变更该任务状态");
+    task.status = status;
+    task.updatedAt = nowIso();
+    if (room.type === "persistent") void this.persistence.saveRoom(room);
+    this.emit("task", roomId, task);
+    return task;
+  }
+
+  completeTask(roomId: string, by: AgentIdentity, taskId: string, note?: string): Task {
+    const room = this.requireOwned(roomId);
+    this.requireMember(room, by.agentId);
+    const task = this.requireTask(room, taskId);
+    const executor = task.assignee ?? task.createdBy;
+    if (executor !== by.agentId) throw new RoomError("forbidden", "只有执行者可以提交完成");
+    if (task.status !== "doing" && task.status !== "todo") throw new RoomError("bad-state", `当前状态 ${task.status} 不能提交完成`);
+
+    if (task.judge.mode === "auto") {
+      // Autonomous: executor confirms directly (self-judging allowed by design).
+      task.status = "done";
+      task.judge = { mode: "auto", decidedBy: by.agentId, decidedAt: nowIso(), note };
+    } else {
+      // Controller mode: no self-review.
+      if (room.controllerAgentId === by.agentId && executor === by.agentId)
+        throw new RoomError("self-review", "执行者与判定人相同，禁止自审：请转移判定权或切换自治模式");
+      task.status = "review";
+      task.judge = { mode: "controller", note };
+    }
+    task.updatedAt = nowIso();
+    if (room.type === "persistent") void this.persistence.saveRoom(room);
+    this.emit("task", roomId, task);
+    this.emit("system", roomId, { kind: "judge", text: `${by.nickname} 提交了任务「${task.title}」的完成`, ts: nowIso(), by: by.agentId });
+    return task;
+  }
+
+  approveTask(roomId: string, by: AgentIdentity, taskId: string, note?: string): Task {
+    const room = this.requireOwned(roomId);
+    this.requireMember(room, by.agentId);
+    const task = this.requireTask(room, taskId);
+    if (task.status !== "review") throw new RoomError("bad-state", "只有 review 状态的任务可被判定");
+    if (this.judgeOf(room, task) !== by.agentId)
+      throw new RoomError("forbidden", "只有判定人可以批准");
+    task.status = "done";
+    task.judge = { mode: task.judge.mode, decidedBy: by.agentId, decidedAt: nowIso(), note };
+    task.updatedAt = nowIso();
+    if (room.type === "persistent") void this.persistence.saveRoom(room);
+    this.emit("task", roomId, task);
+    return task;
+  }
+
+  rejectTask(roomId: string, by: AgentIdentity, taskId: string, note?: string): Task {
+    const room = this.requireOwned(roomId);
+    this.requireMember(room, by.agentId);
+    const task = this.requireTask(room, taskId);
+    if (task.status !== "review") throw new RoomError("bad-state", "只有 review 状态的任务可被判定");
+    if (this.judgeOf(room, task) !== by.agentId)
+      throw new RoomError("forbidden", "只有判定人可以驳回");
+    task.status = "rejected";
+    task.judge = { mode: task.judge.mode, decidedBy: by.agentId, decidedAt: nowIso(), note };
+    task.updatedAt = nowIso();
+    if (room.type === "persistent") void this.persistence.saveRoom(room);
+    this.emit("task", roomId, task);
+    return task;
+  }
+
+  reopenTask(roomId: string, by: AgentIdentity, taskId: string): Task {
+    const room = this.requireOwned(roomId);
+    this.requireMember(room, by.agentId);
+    const task = this.requireTask(room, taskId);
+    const allowed = task.createdBy === by.agentId || task.assignee === by.agentId || room.controllerAgentId === by.agentId;
+    if (!allowed) throw new RoomError("forbidden", "无权重新打开该任务");
+    if (task.status !== "done" && task.status !== "rejected") throw new RoomError("bad-state", "只有 done/rejected 的任务可重开");
+    task.status = "todo";
+    task.updatedAt = nowIso();
+    if (room.type === "persistent") void this.persistence.saveRoom(room);
+    this.emit("task", roomId, task);
+    return task;
+  }
+
+  listTasks(roomId: string): Task[] {
+    return this.requireOwned(roomId).tasks;
+  }
+
+  /** Delete a task (creator/assignee may remove only todo tasks; controller may remove any). */
+  deleteTask(roomId: string, by: AgentIdentity, taskId: string): void {
+    const room = this.requireOwned(roomId);
+    this.requireMember(room, by.agentId);
+    const task = this.requireTask(room, taskId);
+    const isController = room.controllerAgentId === by.agentId || room.ownerAgentId === by.agentId;
+    const isCreatorOrAssignee = task.createdBy === by.agentId || task.assignee === by.agentId;
+    if (!isController && !isCreatorOrAssignee) throw new RoomError("forbidden", "无权删除该任务");
+    if (task.status !== "todo" && !isController) throw new RoomError("forbidden", "非待办状态的任务只有判定人可删除");
+    room.tasks = room.tasks.filter((t) => t.taskId !== taskId);
+    if (room.type === "persistent") void this.persistence.saveRoom(room);
+    this.emit("taskRemoved", roomId, taskId);
+  }
+
+  /** Candidate agents for a task: role match first, then capability overlap. */
+  suggestCandidates(
+    roomId: string,
+    requiredCapabilities: string[],
+    requiredRoles: RoleKey[] = [],
+  ): Array<{ agentId: string; nickname: string; score: number; roleMatch: number }> {
+    const room = this.requireOwned(roomId);
+    const needCaps = new Set(requiredCapabilities);
+    const needRoles = new Set(requiredRoles);
+    const zeroWeight = ZERO_WEIGHT_CAPABILITIES as ReadonlySet<string>;
+    const ranked = room.members.map((m) => {
+      const have = new Set([...(m.capabilities ?? []), ...(m.manualCapabilities ?? [])]);
+      let score = 0;
+      for (const cap of needCaps) if (have.has(cap) && !zeroWeight.has(cap)) score += 1;
+      let roleMatch = 0;
+      for (const role of needRoles) if ((m.roles ?? []).includes(role)) roleMatch += 1;
+      return { agentId: m.agentId, nickname: m.nickname, score, roleMatch };
+    });
+    ranked.sort((a, b) => (b.roleMatch - a.roleMatch) || (b.score - a.score));
+    return ranked;
+  }
+
+  /** Attach a structured handoff card to a task (executor or controller). */
+  setTaskHandoff(roomId: string, by: AgentIdentity, taskId: string, handoff: TaskHandoff): Task {
+    const room = this.requireOwned(roomId);
+    this.requireMember(room, by.agentId);
+    const task = this.requireTask(room, taskId);
+    const allowed = task.assignee === by.agentId || task.createdBy === by.agentId || room.controllerAgentId === by.agentId;
+    if (!allowed) throw new RoomError("forbidden", "无权更新交接卡");
+    task.handoff = handoff;
+    task.updatedAt = nowIso();
+    if (room.type === "persistent") void this.persistence.saveRoom(room);
+    this.emit("task", roomId, task);
+    return task;
+  }
+
+  /** A member declares their own workflow roles (self-report). */
+  setMemberRoles(roomId: string, by: AgentIdentity, roles: RoleKey[]): void {
+    const room = this.requireOwned(roomId);
+    const member = room.members.find((m) => m.agentId === by.agentId);
+    if (!member) throw new RoomError("not-member", "不在房间内");
+    member.roles = roles;
+    if (room.type === "persistent") void this.persistence.saveRoom(room);
+    this.emit("members", roomId, room.members);
+  }
+
+  /** Refresh a member's live profile (nickname/capabilities/roles) pushed by that member. */
+  updateMemberProfile(roomId: string, agentId: string, patch: { nickname?: string; capabilities?: string[]; manualCapabilities?: string[]; roles?: RoleKey[] }): void {
+    const room = this.requireOwned(roomId);
+    const member = room.members.find((m) => m.agentId === agentId);
+    if (!member) return;
+    if (typeof patch.nickname === "string" && patch.nickname) member.nickname = patch.nickname;
+    if (patch.capabilities) member.capabilities = patch.capabilities;
+    if (patch.manualCapabilities) member.manualCapabilities = patch.manualCapabilities;
+    if (patch.roles) member.roles = patch.roles;
+    if (room.type === "persistent") void this.persistence.saveRoom(room);
+    this.emit("members", roomId, room.members);
+  }
+
+  /** Owner (or controller) assigns workflow roles to a member. */
+  assignMemberRoles(roomId: string, by: AgentIdentity, targetAgentId: string, roles: RoleKey[]): void {
+    const room = this.requireOwned(roomId);
+    if (room.controllerAgentId !== by.agentId && room.ownerAgentId !== by.agentId)
+      throw new RoomError("forbidden", "只有房主或判定人可以安排岗位");
+    const member = room.members.find((m) => m.agentId === targetAgentId);
+    if (!member) throw new RoomError("not-member", "成员不在房间内");
+    member.roles = roles;
+    if (room.type === "persistent") void this.persistence.saveRoom(room);
+    this.emit("members", roomId, room.members);
+  }
+
+  /** Set the member's manual capability tags (kept separate from auto-collected). */
+  setMemberCapabilities(roomId: string, by: AgentIdentity, capabilities: string[]): void {
+    const room = this.requireOwned(roomId);
+    const member = room.members.find((m) => m.agentId === by.agentId);
+    if (!member) throw new RoomError("not-member", "不在房间内");
+    member.manualCapabilities = capabilities;
+    if (room.type === "persistent") void this.persistence.saveRoom(room);
+    this.emit("members", roomId, room.members);
+  }
+
+  /* ------------------------------ misc --------------------------------- */
+
+  private async recordJoined(roomId: string, address: string, title?: string): Promise<void> {
+    this.joined = this.joined.filter((r) => r.roomId !== roomId);
+    this.joined.unshift({ roomId, address, title, lastVisitedAt: nowIso() });
+    this.joined = this.joined.slice(0, 50);
+    await this.persistence.saveJoined(this.joined);
+  }
+
+  async recordVisited(roomId: string, address: string, title?: string): Promise<void> {
+    await this.recordJoined(roomId, address, title);
+  }
+}
+
+function defaultNickname(): string {
+  try {
+    return process.env.COMPUTERNAME || process.env.HOSTNAME || "agent";
+  } catch {
+    return "agent";
+  }
+}
