@@ -8,6 +8,7 @@ import type {
   AgentIdentity,
   ChatMessage,
   JoinedRoomRecord,
+  RevokedMember,
   RoleKey,
   Room,
   RoomSettings,
@@ -37,6 +38,8 @@ export interface RoomGateway {
   joinRoom(addresses: string[], options: { roomId?: string; password?: string }): Promise<{ roomId: string; title: string }>;
   leaveRoom(roomId: string): Promise<void>;
   kickMember(roomId: string, agentId: string): Promise<void>;
+  revokeMember(roomId: string, agentId: string, reason?: string): Promise<RevokedMember>;
+  unrevokeMember(roomId: string, agentId: string): Promise<void>;
   setAutoReply(roomId: string, on: boolean): void;
   sendChat(roomId: string, input: { text: string; replyTo?: number; mentions?: string[]; human?: boolean }): Promise<ChatMessage | null>;
   updateSettings(roomId: string, patch: Partial<RoomSettings> & { password?: string }): Promise<Room>;

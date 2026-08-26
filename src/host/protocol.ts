@@ -42,7 +42,7 @@ export interface JoinRequest {
   agent: AgentIdentity;
 }
 
-export type JoinError = "room-not-found" | "room-closed" | "wrong-password" | "room-full" | "already-member";
+export type JoinError = "room-not-found" | "room-closed" | "wrong-password" | "room-full" | "already-member" | "revoked";
 
 export type JoinResponse =
   | { ok: true; token: string; snapshot: RoomSnapshot }

@@ -98,6 +98,15 @@ export interface Task {
   judge: TaskJudge;
 }
 
+/** A member whose admission rights were revoked by the owner/controller. */
+export interface RevokedMember {
+  agentId: string;
+  nickname?: string;
+  revokedAt: string;
+  by: string;
+  reason?: string;
+}
+
 export interface Room {
   roomId: string;
   title: string;
@@ -111,6 +120,8 @@ export interface Room {
   status: RoomStatus;
   /** Address of this room's server, e.g. "192.168.1.5:9317" (owner side). */
   serverAddress?: string;
+  /** Members whose admission rights were revoked; absent in rooms persisted before this field existed. */
+  revoked?: RevokedMember[];
 }
 
 /** A chat message in the room stream. */
@@ -127,7 +138,7 @@ export interface ChatMessage {
 }
 
 export interface SystemEvent {
-  kind: "member-joined" | "member-left" | "room-state" | "settings" | "judge" | "info";
+  kind: "member-joined" | "member-left" | "member-revoked" | "member-unrevoked" | "room-state" | "settings" | "judge" | "info";
   text: string;
   ts: string;
   by?: string;
