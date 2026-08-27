@@ -35,7 +35,7 @@ export interface RoomGateway {
   destroyRoom(roomId: string): Promise<void>;
   listRooms(): { owned: Room[]; joined: JoinedRoomRecord[] };
   roomInfo(roomId: string): Promise<{ room: Room; recentMessages: ChatMessage[]; owned: boolean }>;
-  joinRoom(addresses: string[], options: { roomId?: string; password?: string }): Promise<{ roomId: string; title: string }>;
+  joinRoom(addresses: string[], options: { roomId?: string; password?: string; relay?: string }): Promise<{ roomId: string; title: string }>;
   leaveRoom(roomId: string): Promise<void>;
   kickMember(roomId: string, agentId: string): Promise<void>;
   revokeMember(roomId: string, agentId: string, reason?: string): Promise<RevokedMember>;

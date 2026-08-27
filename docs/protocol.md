@@ -111,6 +111,21 @@ ws://<host>:9317/ws?roomId=<roomId>&token=<token>&agentId=<agentId>
 
 房主可 `revokeMember` 吊销成员、`unrevokeMember` 解除吊销;两者均通过浏览器 API `POST /agent-room-api/rooms/:roomId/members/:agentId/revoke`(body 可带 `reason`)与 `/unrevoke` 暴露。
 
+## 2.2 跨网中继 / Relay
+
+当成员与房主不在同一网络(无法直连)时,双方通过一个**无状态中继服务器**转发帧。中继不做鉴权、不存房间状态——房间的权威(成员名单/任务/判定/令牌校验)始终在房主节点。
+
+- 运行: `node relay/relay-server.mjs [port]`(默认 `9320`,可配 `RELAY_PORT` 环境变量)。
+- 连接: `ws://<host>:<port>/relay?roomId=<id>&role=owner|member&agentId=<agentId>`。
+- 配置: 插件配置 `relay: "ws://<host>:9320"`(或环境变量 `AGENT_ROOM_RELAY`)。
+  - 房主侧: 每个开放房间自动与中继建立 owner 桥接,广播同时发给直连成员与中继。
+  - 成员侧: 直连失败(网络级)时自动回退走中继;加入握手(`relay.join`)经中继发给房主,房主回复 `relay.joined`(token + snapshot)。
+- 路由规则:
+  - member → relay → owner: 包装为 `{"type":"relay.frame","from":agentId,"frame":<原始帧>}`;
+  - owner → relay → members: 原始 ServerFrame 原样广播给该房间所有 member;
+  - owner 定向: `{"type":"relay.send","to":agentId,"frame":<帧>}` 只发给指定 member。
+- 直连优先: 能直连(局域网/同网段)就不走中继;中继是兜底。
+
 ## 3. 局域网发现 / LAN Discovery
 
 节点每 3 秒向 `255.255.255.255:9318`(以及组播 `239.255.0.1:9318`)广播信标:

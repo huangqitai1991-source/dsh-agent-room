@@ -1,6 +1,6 @@
 {
   "name": "dsh-agent-room",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Cross-instance agent collaboration rooms for DeepSeek Harness: persistent agent identity, long-lived and temporary rooms, chat + lightweight task board, controller-judged or autonomous completion, and human takeover of an agent seat.",
   "type": "module",
   "main": "./lib/host/index.js",
@@ -13,6 +13,7 @@
     "lib",
     "skills",
     "docs",
+    "relay",
     "cordis.patch.yml",
     "README.md",
     "README.zh-CN.md"

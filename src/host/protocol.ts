@@ -66,7 +66,9 @@ export type ClientFrame =
   | { type: "task.remove"; payload: { taskId: string } }
   | { type: "task.delete"; payload: { taskId: string } }
   | { type: "member.profile"; payload: { nickname: string; capabilities?: string[]; manualCapabilities?: string[]; roles?: RoleKey[] } }
-  | { type: "room.leave"; payload: Record<string, never> };
+  | { type: "room.leave"; payload: Record<string, never> }
+  /** Join handshake sent through a relay when the owner is not directly reachable. */
+  | { type: "relay.join"; payload: { agent: AgentIdentity; password?: string } };
 
 export type ServerFrame =
   | { type: "room.snapshot"; payload: RoomSnapshot }
@@ -76,7 +78,9 @@ export type ServerFrame =
   | { type: "members"; payload: { members: Member[] } }
   | { type: "system.event"; payload: SystemEvent }
   | { type: "ack"; payload: { seq: number; ok: boolean; error?: string } }
-  | { type: "error"; payload: { message: string } };
+  | { type: "error"; payload: { message: string } }
+  /** Join result delivered through a relay (targeted to one member). */
+  | { type: "relay.joined"; payload: { ok: boolean; token?: string; snapshot?: RoomSnapshot; error?: string } };
 
 export interface TaskCreatePayload {
   title: string;

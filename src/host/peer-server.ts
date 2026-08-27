@@ -37,19 +37,26 @@ const MAX_BODY = 64 * 1024;
 export interface PeerServerOptions {
   port: number;
   service: RoomService;
+  /** Cross-network relay address, e.g. "ws://1.2.3.4:9320". When set, this node
+   *  bridges each owned room to the relay so remote members can join it. */
+  relay?: string;
 }
 
 export class PeerServer {
   private readonly port: number;
   private readonly service: RoomService;
+  private readonly relayAddress?: string;
   private httpServer: HttpServer | null = null;
   private wsServer: WebSocketServer | null = null;
   private sockets = new Map<WebSocket, SocketMeta>();
+  /** roomId -> this node's outbound "owner" connection to the relay. */
+  private readonly relaySockets = new Map<string, WebSocket>();
   private heartbeat: NodeJS.Timeout | null = null;
 
   constructor(options: PeerServerOptions) {
     this.port = options.port;
     this.service = options.service;
+    this.relayAddress = options.relay;
 
     // Forward service events to member sockets.
     this.service.on("chat", (roomId, message) => this.broadcast(roomId, { type: "chat.message", payload: message }));
@@ -70,6 +77,13 @@ export class PeerServer {
             /* ignore */
           }
         }
+      }
+    });
+    // Room lifecycle drives the relay bridge: bridge open rooms, drop closed ones.
+    this.service.on("roomState", (roomId, status) => {
+      if (this.relayAddress) {
+        if (status === "open") this.connectRelay(roomId);
+        else this.disconnectRelay(roomId);
       }
     });
   }
@@ -106,6 +120,14 @@ export class PeerServer {
         }
       }
     }, HEARTBEAT_INTERVAL_MS);
+
+    // Bridge existing owned rooms to the relay (rooms created later are bridged
+    // via the roomState event handler).
+    if (this.relayAddress) {
+      for (const room of this.service.listOwnedRooms()) {
+        if (room.status === "open") this.connectRelay(room.roomId);
+      }
+    }
 
     return this.address;
   }
@@ -259,9 +281,48 @@ export class PeerServer {
       this.send(socket, frameError("invalid-frame"));
       return;
     }
-    const identity = this.memberIdentity(meta.roomId, meta.agentId);
+    // Direct sockets close themselves on leave; relay members close their own
+    // relay connection after the ack (handled inside handleFrameFrom).
+    if (frame.type === "room.leave") {
+      await this.service.removeMember(meta.roomId, meta.agentId);
+      socket.close(1000, "left");
+      return;
+    }
+    await this.handleFrameFrom(meta.roomId, meta.agentId, frame, (f) => this.send(socket, f));
+  }
+
+  /**
+   * Process a client frame with an explicit (roomId, agentId) — the transport
+   * may be a direct socket or a relay bridge. `respond` delivers replies (errors,
+   * join results) back to that member over the right transport.
+   */
+  private async handleFrameFrom(
+    roomId: string,
+    agentId: string,
+    frame: ClientFrame,
+    respond: (frame: ServerFrame) => void,
+  ): Promise<void> {
+    // Join handshake over a relay: no HTTP reachability, so the owner performs
+    // the join here and replies with the token + snapshot.
+    if (frame.type === "relay.join") {
+      const payload = frame.payload as { agent?: AgentIdentity; password?: string };
+      if (!payload?.agent?.agentId) {
+        respond({ type: "relay.joined", payload: { ok: false, error: "missing agent identity" } });
+        return;
+      }
+      try {
+        const result = this.service.joinOwnedRoom(roomId, payload.agent, { password: payload.password });
+        const snapshot = await this.snapshotFor(roomId);
+        respond({ type: "relay.joined", payload: { ok: true, token: result.token, snapshot } });
+      } catch (err) {
+        respond({ type: "relay.joined", payload: { ok: false, error: (err as Error).message } });
+      }
+      return;
+    }
+
+    const identity = this.memberIdentity(roomId, agentId);
     if (!identity) {
-      this.send(socket, frameError("not-member"));
+      respond(frameError("not-member"));
       return;
     }
     try {
@@ -271,56 +332,126 @@ export class PeerServer {
         case "chat.send": {
           const { text, replyTo, mentions, human } = frame.payload;
           if (text.length > MAX_MESSAGE_LENGTH) throw new Error("message-too-long");
-          await this.service.addChatMessage(meta.roomId, identity, { text, replyTo, mentions, human });
+          await this.service.addChatMessage(roomId, identity, { text, replyTo, mentions, human });
           return;
         }
         case "task.create":
-          this.service.createTask(meta.roomId, identity, frame.payload);
+          this.service.createTask(roomId, identity, frame.payload);
           return;
         case "task.assign":
-          this.service.assignTask(meta.roomId, identity, frame.payload.taskId, frame.payload.assignee);
+          this.service.assignTask(roomId, identity, frame.payload.taskId, frame.payload.assignee);
           return;
         case "task.claim":
-          this.service.claimTask(meta.roomId, identity, frame.payload.taskId);
+          this.service.claimTask(roomId, identity, frame.payload.taskId);
           return;
         case "task.comment":
-          this.service.commentTask(meta.roomId, identity, frame.payload.taskId, frame.payload.text);
+          this.service.commentTask(roomId, identity, frame.payload.taskId, frame.payload.text);
           return;
         case "task.status":
-          this.service.setTaskStatus(meta.roomId, identity, frame.payload.taskId, frame.payload.status);
+          this.service.setTaskStatus(roomId, identity, frame.payload.taskId, frame.payload.status);
           return;
         case "task.complete":
-          this.service.completeTask(meta.roomId, identity, frame.payload.taskId, frame.payload.note);
+          this.service.completeTask(roomId, identity, frame.payload.taskId, frame.payload.note);
           return;
         case "task.handoff":
-          this.service.setTaskHandoff(meta.roomId, identity, frame.payload.taskId, frame.payload.handoff);
+          this.service.setTaskHandoff(roomId, identity, frame.payload.taskId, frame.payload.handoff);
           return;
         case "task.approve":
-          this.service.approveTask(meta.roomId, identity, frame.payload.taskId, frame.payload.note);
+          this.service.approveTask(roomId, identity, frame.payload.taskId, frame.payload.note);
           return;
         case "task.reject":
-          this.service.rejectTask(meta.roomId, identity, frame.payload.taskId, frame.payload.note);
+          this.service.rejectTask(roomId, identity, frame.payload.taskId, frame.payload.note);
           return;
         case "task.reopen":
-          this.service.reopenTask(meta.roomId, identity, frame.payload.taskId);
+          this.service.reopenTask(roomId, identity, frame.payload.taskId);
           return;
         case "task.remove":
         case "task.delete":
-          this.service.deleteTask(meta.roomId, identity, frame.payload.taskId);
+          this.service.deleteTask(roomId, identity, frame.payload.taskId);
           return;
         case "member.profile":
-          this.service.updateMemberProfile(meta.roomId, meta.agentId, frame.payload);
+          this.service.updateMemberProfile(roomId, agentId, frame.payload);
           return;
         case "room.leave":
-          await this.service.removeMember(meta.roomId, meta.agentId);
-          socket.close(1000, "left");
+          await this.service.removeMember(roomId, agentId);
+          respond({ type: "ack", payload: { seq: 0, ok: true } });
           return;
         default:
-          this.send(socket, frameError("unknown-frame-type"));
+          respond(frameError("unknown-frame-type"));
       }
     } catch (err) {
-      this.send(socket, frameError((err as Error).message));
+      respond(frameError((err as Error).message));
     }
+  }
+
+  /* ------------------------- relay bridge ------------------------------ */
+
+  /** Connect (or reconnect) this node to the relay as the owner of `roomId`. */
+  private connectRelay(roomId: string): void {
+    if (!this.relayAddress) return;
+    const existing = this.relaySockets.get(roomId);
+    if (existing && (existing.readyState === WebSocket.OPEN || existing.readyState === WebSocket.CONNECTING)) return;
+    const agentId = this.service.getIdentity()?.agentId ?? "owner";
+    const base = this.relayAddress.replace(/\/+$/, "");
+    const url = `${base}/relay?roomId=${encodeURIComponent(roomId)}&role=owner&agentId=${encodeURIComponent(agentId)}`;
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(url);
+    } catch {
+      return;
+    }
+    this.relaySockets.set(roomId, socket);
+
+    socket.on("open", () => {
+      this.log(`[agent-room] relay bridge open for ${roomId}`);
+    });
+    socket.on("message", (data) => {
+      let msg: unknown;
+      try {
+        msg = JSON.parse(String(data));
+      } catch {
+        return;
+      }
+      const m = msg as { type?: string; from?: string; frame?: ClientFrame };
+      if (m.type === "relay.frame" && m.from && m.frame) {
+        void this.handleFrameFrom(roomId, m.from, m.frame, (f) => this.sendRelay(roomId, m.from!, f));
+      }
+    });
+    socket.on("close", () => {
+      if (this.relaySockets.get(roomId) === socket) {
+        this.relaySockets.delete(roomId);
+        // Keep trying while the room is still open and the relay is configured.
+        setTimeout(() => {
+          if (this.relayAddress && this.service.getOwnedRoom(roomId)?.status === "open") this.connectRelay(roomId);
+        }, 5000);
+      }
+    });
+    socket.on("error", () => { /* close follows */ });
+  }
+
+  private disconnectRelay(roomId: string): void {
+    const socket = this.relaySockets.get(roomId);
+    if (socket) {
+      this.relaySockets.delete(roomId);
+      try {
+        socket.close(1000, "room closed");
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  /** Deliver a server frame to one member through the relay (targeted). */
+  private sendRelay(roomId: string, toAgentId: string, frame: ServerFrame): void {
+    const relay = this.relaySockets.get(roomId);
+    if (relay?.readyState === WebSocket.OPEN) {
+      relay.send(JSON.stringify({ type: "relay.send", to: toAgentId, frame }));
+    }
+  }
+
+  private log(message: string): void {
+    // The peer server has no cordis logger; keep relay diagnostics on stderr.
+    console.error(message);
   }
 
   private memberIdentity(roomId: string, agentId: string): AgentIdentity | null {
@@ -333,6 +464,11 @@ export class PeerServer {
   private broadcast(roomId: string, frame: ServerFrame): void {
     for (const [socket, meta] of this.sockets) {
       if (meta.roomId === roomId) this.send(socket, frame);
+    }
+    // Relay bridge: the relay fans the raw frame out to remote members.
+    const relay = this.relaySockets.get(roomId);
+    if (relay?.readyState === WebSocket.OPEN) {
+      relay.send(JSON.stringify(frame));
     }
   }
 

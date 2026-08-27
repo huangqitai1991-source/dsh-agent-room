@@ -32,15 +32,19 @@ export interface AgentRoomConfig {
   tools?: boolean;
   /** Register the agent-room skill. */
   skills?: boolean;
+  /** Cross-network relay address, e.g. "ws://1.2.3.4:9320". Owners bridge their
+   *  rooms to it; members fall back to it when the owner is not reachable. */
+  relay?: string;
 }
 
-export function resolveConfig(config: AgentRoomConfig = {}): Required<Pick<AgentRoomConfig, "port" | "tools" | "skills">> & { dataDir: string } {
+export function resolveConfig(config: AgentRoomConfig = {}): Required<Pick<AgentRoomConfig, "port" | "tools" | "skills">> & { dataDir: string; relay?: string } {
   const dshHome = process.env.DSH_HOME ?? join(homedir(), ".dsh");
   return {
     port: config.port ?? DEFAULT_PORT,
     dataDir: config.dataDir ?? join(dshHome, "agent-room"),
     tools: config.tools ?? true,
     skills: config.skills ?? true,
+    relay: config.relay ?? process.env.AGENT_ROOM_RELAY,
   };
 }
 
@@ -52,7 +56,7 @@ declare module "@deepseek-ai/cordis" {
 
 export class AgentRoomService extends Service {
   readonly roomService: RoomService;
-  readonly config: Required<Omit<AgentRoomConfig, "dataDir">> & { dataDir: string };
+  readonly config: Required<Omit<AgentRoomConfig, "dataDir" | "relay">> & { dataDir: string; relay?: string };
 
   private peerServer: PeerServer | null = null;
   private peerStarting: Promise<string> | null = null;
@@ -241,7 +245,7 @@ export class AgentRoomService extends Service {
   private async ensurePeerServer(): Promise<string> {
     if (this.peerServer) return this.peerServer.address;
     this.peerStarting ??= (async () => {
-      const server = new PeerServer({ port: this.config.port, service: this.roomService });
+      const server = new PeerServer({ port: this.config.port, service: this.roomService, relay: this.config.relay });
       const address = await server.start();
       this.peerServer = server;
       this.ctx.logger?.info?.("[agent-room] room server listening on %s", address);
@@ -275,6 +279,7 @@ export class AgentRoomService extends Service {
         roomId: options.roomId,
         password: options.password,
         agent: identity,
+        relay: options.relay ?? this.config.relay,
         onJoinedRecord: (record) => this.roomService.recordVisited(record.roomId, record.address, record.title),
       });
       await client.connect();
