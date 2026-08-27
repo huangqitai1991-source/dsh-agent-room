@@ -22,6 +22,14 @@ interface ApiMember {
   roles?: string[];
 }
 
+interface ApiRevoked {
+  agentId: string;
+  nickname?: string;
+  revokedAt: string;
+  by: string;
+  reason?: string;
+}
+
 interface ApiTask {
   taskId: string;
   title: string;
@@ -61,6 +69,7 @@ interface ApiRoom {
   memberCount: number;
   members: ApiMember[];
   tasks: ApiTask[];
+  revoked?: ApiRevoked[];
   autoReply?: boolean;
 }
 
@@ -281,6 +290,8 @@ function RoomDock(): React.ReactElement {
   const [confirmKickAgent, setConfirmKickAgent] = React.useState<string | null>(null);
   const [confirmLeaveRoom, setConfirmLeaveRoom] = React.useState<string | null>(null);
   const [confirmDeleteTask, setConfirmDeleteTask] = React.useState<string | null>(null);
+  const [confirmRevokeAgent, setConfirmRevokeAgent] = React.useState<string | null>(null);
+  const [confirmUnrevokeAgent, setConfirmUnrevokeAgent] = React.useState<string | null>(null);
   const chatScrollRef = React.useRef<HTMLDivElement | null>(null);
   const openTimer = React.useRef<number | null>(null);
   const closeTimer = React.useRef<number | null>(null);
@@ -291,6 +302,8 @@ function RoomDock(): React.ReactElement {
     setConfirmKickAgent(null);
     setConfirmLeaveRoom(null);
     setConfirmDeleteTask(null);
+    setConfirmRevokeAgent(null);
+    setConfirmUnrevokeAgent(null);
   };
 
   /** Two-step inline confirm (browser dialogs can be blocked, so no window.confirm). */
@@ -512,6 +525,50 @@ function RoomDock(): React.ReactElement {
     if (!activeRoom) return;
     setConfirmKickAgent(null);
     void post(`/agent-room-api/rooms/${encodeURIComponent(activeRoom.roomId)}/members/${encodeURIComponent(member.agentId)}/kick`).then(() =>
+      window.setTimeout(() => stateApi().then(setState).catch(() => {}), 400),
+    );
+  };
+
+  const armRevoke = (agentId: string) => {
+    setConfirmDelete(false);
+    setConfirmLeaveRoom(null);
+    setConfirmKickAgent(null);
+    setConfirmDeleteTask(null);
+    setConfirmUnrevokeAgent(null);
+    setConfirmRevokeAgent(agentId);
+    if (confirmTimer.current !== null) window.clearTimeout(confirmTimer.current);
+    confirmTimer.current = window.setTimeout(() => {
+      confirmTimer.current = null;
+      resetConfirms();
+    }, 3500);
+  };
+
+  const doRevokeMember = (member: ApiMember) => {
+    if (!activeRoom) return;
+    setConfirmRevokeAgent(null);
+    void post(`/agent-room-api/rooms/${encodeURIComponent(activeRoom.roomId)}/members/${encodeURIComponent(member.agentId)}/revoke`).then(() =>
+      window.setTimeout(() => stateApi().then(setState).catch(() => {}), 400),
+    );
+  };
+
+  const armUnrevoke = (agentId: string) => {
+    setConfirmDelete(false);
+    setConfirmLeaveRoom(null);
+    setConfirmKickAgent(null);
+    setConfirmDeleteTask(null);
+    setConfirmRevokeAgent(null);
+    setConfirmUnrevokeAgent(agentId);
+    if (confirmTimer.current !== null) window.clearTimeout(confirmTimer.current);
+    confirmTimer.current = window.setTimeout(() => {
+      confirmTimer.current = null;
+      resetConfirms();
+    }, 3500);
+  };
+
+  const doUnrevokeMember = (agentId: string) => {
+    if (!activeRoom) return;
+    setConfirmUnrevokeAgent(null);
+    void post(`/agent-room-api/rooms/${encodeURIComponent(activeRoom.roomId)}/members/${encodeURIComponent(agentId)}/unrevoke`).then(() =>
       window.setTimeout(() => stateApi().then(setState).catch(() => {}), 400),
     );
   };
@@ -783,13 +840,43 @@ function RoomDock(): React.ReactElement {
                     <button style={S.buttonGhost} onClick={() => setTakeover((v) => !v)}>{takeover ? "释放接管" : "接管"}</button>
                   )}
                   {activeRoom.owned && m.agentId !== localAgentId && m.role !== "owner" && (
-                    <button
-                      style={confirmKickAgent === m.agentId ? { ...S.button, background: "#e5484d" } : { ...S.buttonGhost, color: "#e5484d", borderColor: "rgba(229,72,77,.5)" }}
-                      onClick={() => (confirmKickAgent === m.agentId ? doKickMember(m) : armKick(m.agentId))}
-                    >{confirmKickAgent === m.agentId ? "确认踢出?" : "踢出"}</button>
+                    <>
+                      <button
+                        style={confirmRevokeAgent === m.agentId ? { ...S.button, background: "#e5484d" } : { ...S.buttonGhost, color: "#e5484d", borderColor: "rgba(229,72,77,.5)" }}
+                        onClick={() => (confirmRevokeAgent === m.agentId ? doRevokeMember(m) : armRevoke(m.agentId))}
+                        title="吊销入场资格：踢出且禁止再加入，直到解除吊销"
+                      >{confirmRevokeAgent === m.agentId ? "确认吊销?" : "吊销"}</button>
+                      <button
+                        style={confirmKickAgent === m.agentId ? { ...S.button, background: "#e5484d" } : { ...S.buttonGhost, color: "#e5484d", borderColor: "rgba(229,72,77,.5)" }}
+                        onClick={() => (confirmKickAgent === m.agentId ? doKickMember(m) : armKick(m.agentId))}
+                        title="踢出（可重新加入）"
+                      >{confirmKickAgent === m.agentId ? "确认踢出?" : "踢出"}</button>
+                    </>
                   )}
                 </div>
               ))}
+              {(activeRoom.revoked?.length ?? 0) > 0 && (
+                <div style={{ borderTop: "1px solid var(--dsh-border-color, rgba(128,128,128,.2))", marginTop: 6, paddingTop: 6 }}>
+                  <div style={{ ...S.row, opacity: 0.7, fontSize: 11, fontWeight: 600 }}>🚫 已吊销名单</div>
+                  {activeRoom.revoked!.map((r) => (
+                    <div key={r.agentId} style={S.row}>
+                      <span>🚫</span>
+                      <span style={{ flex: 1 }}>
+                        {r.nickname ?? r.agentId.slice(0, 8)}
+                        {r.reason && <span style={{ opacity: 0.6, fontSize: 11 }}>（{r.reason}）</span>}
+                      </span>
+                      <span style={{ opacity: 0.55, fontSize: 11, fontFamily: "monospace" }}>{r.agentId.slice(0, 8)}</span>
+                      {activeRoom.owned && (
+                        <button
+                          style={confirmUnrevokeAgent === r.agentId ? { ...S.button, background: "#2e9e44" } : S.buttonGhost}
+                          onClick={() => (confirmUnrevokeAgent === r.agentId ? doUnrevokeMember(r.agentId) : armUnrevoke(r.agentId))}
+                          title="解除吊销（恢复入场资格）"
+                        >{confirmUnrevokeAgent === r.agentId ? "确认解除?" : "解除吊销"}</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
               <div style={{ ...S.row, borderTop: "1px solid var(--dsh-border-color, rgba(128,128,128,.2))", marginTop: 6, paddingTop: 6 }}>
                 <span style={{ opacity: 0.7, fontSize: 11 }}>我的岗位:</span>
                 <select
