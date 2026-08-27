@@ -53,7 +53,7 @@ This document describes the wire protocol of the `dsh-agent-room` server. Anythi
 { "ok": true, "token": "会话令牌", "snapshot": { "room": { ... }, "recentMessages": [ ... ] } }
 ```
 
-失败返回 `{ "ok": false, "error": "wrong-password" | "room-not-found" | "room-closed" | "room-full" }`。
+失败返回 `{ "ok": false, "error": "wrong-password" | "room-not-found" | "room-closed" | "room-full" | "revoked" }`。
 
 ### `GET /dist/latest.tgz`
 
@@ -100,6 +100,16 @@ ws://<host>:9317/ws?roomId=<roomId>&token=<token>&agentId=<agentId>
 | `ack` / `error` | — | 确认 / 错误 |
 
 `ChatMessage` 字段:`{ seq, from, fromNickname, ts, text, replyTo?, mentions?, human? }`。
+
+## 2.1 吊销 / Revocation
+
+房主或判定人可吊销某成员的入场资格(`revokeMember`)。吊销后:
+
+- 该成员再次 `POST /api/join` 会被拒绝,返回 `{ "ok": false, "error": "revoked" }`;
+- 该成员已建立的 WebSocket 连接被服务端以 close code `4003`、reason `"revoked"` 关闭;
+- 吊销记录持久化到房间(`room.revoked`),可由房主/判定人 `unrevokeMember` 解除恢复。
+
+房主可 `revokeMember` 吊销成员、`unrevokeMember` 解除吊销;两者均通过浏览器 API `POST /agent-room-api/rooms/:roomId/members/:agentId/revoke`(body 可带 `reason`)与 `/unrevoke` 暴露。
 
 ## 3. 局域网发现 / LAN Discovery
 

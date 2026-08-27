@@ -13,6 +13,7 @@ import type {
   ChatMessage,
   JoinedRoomRecord,
   Member,
+  RevokedMember,
   RoleKey,
   Room,
   RoomSettings,
@@ -37,6 +38,8 @@ export interface RoomServiceEvents {
   system: (roomId: string, event: SystemEvent) => void;
   members: (roomId: string, members: Member[]) => void;
   roomState: (roomId: string, status: Room["status"]) => void;
+  /** A member's admission rights were revoked; close their live sockets. */
+  revoked: (roomId: string, agentId: string) => void;
 }
 
 export interface RoomServiceOptions {
@@ -177,6 +180,7 @@ export class RoomService extends EventEmitter {
       tasks: [],
       status: "open",
       serverAddress: address,
+      revoked: [],
     };
     this.owned.set(room.roomId, room);
     this.seqs.set(room.roomId, 0);
@@ -236,6 +240,8 @@ export class RoomService extends EventEmitter {
     options: { password?: string },
   ): { token: string } {
     const room = this.requireOwned(roomId);
+    if ((room.revoked ?? []).some((r) => r.agentId === agent.agentId))
+      throw new RoomError("revoked", "该成员已被吊销入场资格");
     if (room.status !== "open") throw new RoomError("room-closed", "房间未开放");
     if (room.members.length >= room.settings.maxMembers)
       throw new RoomError("room-full", "房间人数已满");
@@ -296,6 +302,84 @@ export class RoomService extends EventEmitter {
     this.emit("system", roomId, { kind: "member-left", text: `${member.nickname} 离开了房间`, ts: nowIso(), by: agentId });
   }
 
+  /**
+   * Resolve a member reference (agentId or nickname, case-insensitive nickname)
+   * to a canonical member. Throws unknown-member when absent, ambiguous-member
+   * when the nickname matches more than one member.
+   */
+  private resolveMember(room: Room, ref: string): Member {
+    const normalized = ref.toLowerCase();
+    const matches = room.members.filter((m) => m.agentId === ref || m.nickname.toLowerCase() === normalized);
+    if (matches.length === 0) throw new RoomError("unknown-member", `成员不存在: ${ref}`);
+    if (matches.length > 1) throw new RoomError("ambiguous-member", `昵称存在同名成员: ${ref}`);
+    return matches[0]!;
+  }
+
+  /** Resolve an assignee reference, preserving the existing not-member error semantics. */
+  private resolveAssignee(room: Room, ref: string): string {
+    try {
+      return this.resolveMember(room, ref).agentId;
+    } catch (err) {
+      if (err instanceof RoomError && (err.code === "unknown-member" || err.code === "ambiguous-member")) {
+        throw new RoomError("not-member", `被指派者不在房间内: ${ref}`);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Revoke a member's admission rights (owner or controller only). Removes the
+   * member and their token, records an idempotent revocation entry, persists,
+   * and emits members/system/revoked events.
+   */
+  async revokeMember(roomId: string, by: AgentIdentity, agentId: string, reason?: string): Promise<RevokedMember> {
+    const room = this.requireOwned(roomId);
+    if (room.ownerAgentId !== by.agentId && room.controllerAgentId !== by.agentId)
+      throw new RoomError("forbidden", "只有房主或判定人可以吊销成员");
+    if (agentId === room.ownerAgentId)
+      throw new RoomError("forbidden", "不能吊销房主");
+
+    const member = room.members.find((m) => m.agentId === agentId);
+    const revoked = room.revoked ?? [];
+    const existing = revoked.find((r) => r.agentId === agentId);
+    const record: RevokedMember = {
+      agentId,
+      nickname: member?.nickname ?? existing?.nickname,
+      revokedAt: nowIso(),
+      by: by.agentId,
+      reason: reason !== undefined ? reason : existing?.reason,
+    };
+    room.revoked = [...revoked.filter((r) => r.agentId !== agentId), record];
+
+    if (member) {
+      room.members = room.members.filter((m) => m.agentId !== agentId);
+      this.tokens.get(roomId)?.delete(agentId);
+    }
+
+    if (room.type === "persistent") await this.persistence.saveRoom(room);
+    this.emit("members", roomId, room.members);
+    this.emit("system", roomId, {
+      kind: "member-revoked",
+      text: `${member?.nickname ?? agentId} 已被吊销入场资格`,
+      ts: record.revokedAt,
+      by: by.agentId,
+    });
+    this.emit("revoked", roomId, agentId);
+    return record;
+  }
+
+  /** Restore a revoked member's admission rights (owner or controller only). */
+  async unrevokeMember(roomId: string, by: AgentIdentity, agentId: string): Promise<void> {
+    const room = this.requireOwned(roomId);
+    if (room.ownerAgentId !== by.agentId && room.controllerAgentId !== by.agentId)
+      throw new RoomError("forbidden", "只有房主或判定人可以解除吊销");
+    const revoked = room.revoked ?? [];
+    if (!revoked.some((r) => r.agentId === agentId)) return;
+    room.revoked = revoked.filter((r) => r.agentId !== agentId);
+    if (room.type === "persistent") await this.persistence.saveRoom(room);
+    this.emit("system", roomId, { kind: "member-unrevoked", text: `${agentId} 已恢复入场资格`, ts: nowIso(), by: by.agentId });
+  }
+
   /* ------------------------------ settings ----------------------------- */
 
   async updateSettings(roomId: string, patch: Partial<RoomSettings> & { password?: string }): Promise<Room> {
@@ -327,6 +411,22 @@ export class RoomService extends EventEmitter {
     const room = this.requireOwned(roomId);
     if (input.text.length === 0) throw new RoomError("empty-message", "消息不能为空");
     if (input.text.length > 16 * 1024) throw new RoomError("message-too-long", "消息过长");
+    // Resolve mentions to canonical agentIds (agentId or nickname accepted).
+    let mentions: string[] | undefined;
+    if (input.mentions && input.mentions.length > 0) {
+      const resolved: string[] = [];
+      for (const ref of input.mentions) {
+        try {
+          resolved.push(this.resolveMember(room, ref).agentId);
+        } catch (err) {
+          if (err instanceof RoomError && err.code === "unknown-member") {
+            throw new RoomError("unknown-mention", `无法识别的成员: ${ref}`);
+          }
+          throw err;
+        }
+      }
+      mentions = [...new Set(resolved)];
+    }
     const seq = (this.seqs.get(roomId) ?? 0) + 1;
     this.seqs.set(roomId, seq);
     const message: ChatMessage = {
@@ -336,7 +436,7 @@ export class RoomService extends EventEmitter {
       ts: nowIso(),
       text: input.text,
       replyTo: input.replyTo,
-      mentions: input.mentions,
+      mentions,
       human: input.human,
     };
     if (room.type === "persistent") await this.persistence.appendMessage(roomId, message);
@@ -398,12 +498,13 @@ export class RoomService extends EventEmitter {
     const room = this.requireOwned(roomId);
     this.requireMember(room, by.agentId);
     const now = nowIso();
+    const assignee = input.assignee ? this.resolveAssignee(room, input.assignee) : undefined;
     const task: Task = {
       taskId: uuidv7(),
       title: input.title,
       description: input.description ?? "",
       status: "todo",
-      assignee: input.assignee,
+      assignee,
       claimable: input.claimable ?? false,
       requiredCapabilities: input.requiredCapabilities ?? [],
       requiredRoles: input.requiredRoles,
@@ -425,14 +526,14 @@ export class RoomService extends EventEmitter {
   assignTask(roomId: string, by: AgentIdentity, taskId: string, assignee: string): Task {
     const room = this.requireOwned(roomId);
     this.requireMember(room, by.agentId);
-    if (!room.members.some((m) => m.agentId === assignee)) throw new RoomError("not-member", "被指派者不在房间内");
+    const assigneeId = this.resolveAssignee(room, assignee);
     const task = this.requireTask(room, taskId);
     const creator = task.createdBy === by.agentId;
     const judge = this.judgeOf(room, task) === by.agentId;
     const current = task.assignee === by.agentId;
     if (!creator && !judge && !current && room.controllerAgentId !== by.agentId)
       throw new RoomError("forbidden", "无权指派该任务");
-    task.assignee = assignee;
+    task.assignee = assigneeId;
     task.claimable = false;
     if (task.status === "todo") task.status = "doing";
     task.updatedAt = nowIso();

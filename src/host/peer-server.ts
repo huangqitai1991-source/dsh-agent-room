@@ -60,6 +60,18 @@ export class PeerServer {
       const room = this.service.getOwnedRoom(roomId);
       if (room) this.broadcast(roomId, { type: "members", payload: { members: room.members } });
     });
+    // Revocation closes the member's live sockets immediately.
+    this.service.on("revoked", (roomId, agentId) => {
+      for (const [socket, meta] of this.sockets) {
+        if (meta.roomId === roomId && meta.agentId === agentId) {
+          try {
+            socket.close(4003, "revoked");
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    });
   }
 
   get address(): string {
@@ -173,6 +185,7 @@ export class PeerServer {
         "wrong-password": "wrong-password",
         "room-full": "room-full",
         "already-member": "already-member",
+        "revoked": "revoked",
       };
       return { ok: false, error: map[code] ?? "room-not-found" };
     }

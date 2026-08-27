@@ -94,6 +94,27 @@ export function createRouter(service: AgentRoomService): Handler {
         }
       }
 
+      const revokeMatch = /^\/agent-room-api\/rooms\/([^/]+)\/members\/([^/]+)\/revoke$/.exec(path);
+      if (method === "POST" && revokeMatch) {
+        const body = (await readJson(request)) as { reason?: string };
+        try {
+          await service.gateway.revokeMember(decodeURIComponent(revokeMatch[1]!), decodeURIComponent(revokeMatch[2]!), body.reason);
+          return sendJson(response, 200, { ok: true });
+        } catch (err) {
+          return sendJson(response, 400, { ok: false, error: (err as Error).message });
+        }
+      }
+
+      const unrevokeMatch = /^\/agent-room-api\/rooms\/([^/]+)\/members\/([^/]+)\/unrevoke$/.exec(path);
+      if (method === "POST" && unrevokeMatch) {
+        try {
+          await service.gateway.unrevokeMember(decodeURIComponent(unrevokeMatch[1]!), decodeURIComponent(unrevokeMatch[2]!));
+          return sendJson(response, 200, { ok: true });
+        } catch (err) {
+          return sendJson(response, 400, { ok: false, error: (err as Error).message });
+        }
+      }
+
       const autoReplyMatch = /^\/agent-room-api\/rooms\/([^/]+)\/auto-reply$/.exec(path);
       if (method === "POST" && autoReplyMatch) {
         const body = (await readJson(request)) as { on?: boolean };
