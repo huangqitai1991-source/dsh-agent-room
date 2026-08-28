@@ -78,6 +78,10 @@ export class PeerServer {
           }
         }
       }
+      const relay = this.relaySockets.get(roomId);
+      if (relay?.readyState === WebSocket.OPEN) {
+        relay.send(JSON.stringify({ type: "relay.revoke", agentId }));
+      }
     });
     // Room lifecycle drives the relay bridge: bridge open rooms, drop closed ones.
     this.service.on("roomState", (roomId, status) => {
@@ -313,7 +317,7 @@ export class PeerServer {
       try {
         const result = this.service.joinOwnedRoom(roomId, payload.agent, { password: payload.password });
         const snapshot = await this.snapshotFor(roomId);
-        respond({ type: "relay.joined", payload: { ok: true, token: result.token, snapshot } });
+        respond({ type: "relay.joined", payload: { ok: true, token: result.token, ticket: this.service.issueRelayTicket(roomId, payload.agent.agentId), snapshot } });
       } catch (err) {
         respond({ type: "relay.joined", payload: { ok: false, error: (err as Error).message } });
       }
@@ -392,8 +396,9 @@ export class PeerServer {
     const existing = this.relaySockets.get(roomId);
     if (existing && (existing.readyState === WebSocket.OPEN || existing.readyState === WebSocket.CONNECTING)) return;
     const agentId = this.service.getIdentity()?.agentId ?? "owner";
+    const secret = this.service.relaySecretFor(roomId);
     const base = this.relayAddress.replace(/\/+$/, "");
-    const url = `${base}/relay?roomId=${encodeURIComponent(roomId)}&role=owner&agentId=${encodeURIComponent(agentId)}`;
+    const url = `${base}/relay?roomId=${encodeURIComponent(roomId)}&role=owner&agentId=${encodeURIComponent(agentId)}&secret=${encodeURIComponent(secret)}`;
     let socket: WebSocket;
     try {
       socket = new WebSocket(url);

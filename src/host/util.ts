@@ -1,6 +1,6 @@
 /** Small crypto/format helpers used across the plugin. */
 
-import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 
 /** RFC 9562 UUIDv7 (time-ordered). */
 export function uuidv7(): string {
@@ -36,4 +36,50 @@ export function verifyPassword(password: string, stored: string): boolean {
 
 export function nowIso(): string {
   return new Date().toISOString();
+}
+
+/** Base64url-encode a UTF-8 string (RFC 4648 §5, unpadded). */
+export function base64url(text: string): string {
+  return Buffer.from(text, "utf8").toString("base64url");
+}
+
+/** HMAC-SHA256 of `message` keyed by `secret`, hex-encoded. */
+export function hmacSha256Hex(secret: string, message: string): string {
+  return createHmac("sha256", secret).update(message).digest("hex");
+}
+
+export interface RelayTicketPayload {
+  roomId: string;
+  agentId: string;
+  role: string;
+  exp: number;
+}
+
+/** Sign a relay ticket: `<base64url(json)>.<hmac-hex>`. */
+export function signRelayTicket(secret: string, payload: RelayTicketPayload): string {
+  const body = base64url(JSON.stringify(payload));
+  return `${body}.${hmacSha256Hex(secret, body)}`;
+}
+
+/** Verify a relay ticket; returns the payload, or null when malformed/expired/bad-signature. */
+export function verifyRelayTicket(secret: string, ticket: unknown): RelayTicketPayload | null {
+  if (typeof ticket !== "string") return null;
+  const dot = ticket.lastIndexOf(".");
+  if (dot <= 0 || dot === ticket.length - 1) return null;
+  const body = ticket.slice(0, dot);
+  const sig = ticket.slice(dot + 1);
+  const expected = hmacSha256Hex(secret, body);
+  const a = Buffer.from(expected, "hex");
+  const b = Buffer.from(sig, "hex");
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (payload === null || typeof payload !== "object") return null;
+  const p = payload as Record<string, unknown>;
+  if (typeof p.exp === "number" && p.exp < Math.floor(Date.now() / 1000)) return null;
+  return p as unknown as RelayTicketPayload;
 }
