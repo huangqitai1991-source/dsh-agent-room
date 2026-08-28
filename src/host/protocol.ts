@@ -80,7 +80,7 @@ export type ServerFrame =
   | { type: "ack"; payload: { seq: number; ok: boolean; error?: string } }
   | { type: "error"; payload: { message: string } }
   /** Join result delivered through a relay (targeted to one member). */
-  | { type: "relay.joined"; payload: { ok: boolean; token?: string; snapshot?: RoomSnapshot; error?: string } };
+  | { type: "relay.joined"; payload: { ok: boolean; token?: string; ticket?: string; snapshot?: RoomSnapshot; error?: string } };
 
 export interface TaskCreatePayload {
   title: string;

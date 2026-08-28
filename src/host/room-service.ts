@@ -22,7 +22,7 @@ import type {
   TaskHandoff,
 } from "../types.js";
 import { Persistence } from "./persistence.js";
-import { hashPassword, nowIso, randomToken, uuidv7, verifyPassword } from "./util.js";
+import { hashPassword, nowIso, randomToken, signRelayTicket, uuidv7, verifyPassword } from "./util.js";
 import { ZERO_WEIGHT_CAPABILITIES } from "./catalog.js";
 
 export interface CreateRoomInput {
@@ -48,6 +48,9 @@ export interface RoomServiceOptions {
   onNeedServer?: () => Promise<string | undefined>;
 }
 
+/** Relay ticket lifetime in seconds. */
+const RELAY_TICKET_TTL_S = 24 * 60 * 60;
+
 /** Error carrying a stable code for tool/HTTP layers to map. */
 export class RoomError extends Error {
   constructor(
@@ -70,6 +73,10 @@ export class RoomService extends EventEmitter {
   private readonly seqs = new Map<string, number>();
   /** Recent rooms this node joined or created. */
   private joined: JoinedRoomRecord[] = [];
+
+  /** Relay auth secrets (roomId -> 256-bit hex), kept OUT of the room object
+   *  so snapshots never leak them to members. */
+  relaySecrets: Record<string, string> = {};
 
   constructor(options: RoomServiceOptions) {
     super();
@@ -137,6 +144,7 @@ export class RoomService extends EventEmitter {
   async boot(): Promise<void> {
     const identity = await this.ensureIdentity();
     this.joined = await this.persistence.loadJoined();
+    this.relaySecrets = await this.persistence.loadRelaySecrets();
     const rooms = await this.persistence.loadPersistentRooms();
     for (const room of rooms) {
       if (room.ownerAgentId !== identity.agentId) continue;
@@ -205,6 +213,8 @@ export class RoomService extends EventEmitter {
     this.owned.delete(roomId);
     this.seqs.delete(roomId);
     this.tokens.delete(roomId);
+    delete this.relaySecrets[roomId];
+    void this.persistRelaySecrets();
     await this.persistence.deleteRoom(roomId);
     this.joined = this.joined.filter((r) => r.roomId !== roomId);
     await this.persistence.saveJoined(this.joined);
@@ -289,6 +299,32 @@ export class RoomService extends EventEmitter {
   validateToken(roomId: string, agentId: string, token: string): boolean {
     const roomTokens = this.tokens.get(roomId);
     return roomTokens?.get(agentId) === token;
+  }
+
+  /* ------------------------- relay auth ------------------------------ */
+  /** Return the room's relay auth secret, generating and (for persistent
+   *  rooms) persisting it on first use. */
+  relaySecretFor(roomId: string): string {
+    const existing = this.relaySecrets[roomId];
+    if (existing) return existing;
+    const secret = randomToken();
+    this.relaySecrets[roomId] = secret;
+    if (this.owned.get(roomId)?.type === "persistent") void this.persistRelaySecrets();
+    return secret;
+  }
+
+  async persistRelaySecrets(): Promise<void> {
+    await this.persistence.saveRelaySecrets(this.relaySecrets);
+  }
+
+  /** Issue a short-lived HMAC ticket a member presents to the relay. */
+  issueRelayTicket(roomId: string, agentId: string): string {
+    return signRelayTicket(this.relaySecretFor(roomId), {
+      roomId,
+      agentId,
+      role: "member",
+      exp: Math.floor(Date.now() / 1000) + RELAY_TICKET_TTL_S,
+    });
   }
 
   async removeMember(roomId: string, agentId: string): Promise<void> {

@@ -54,6 +54,16 @@ export class Persistence {
     await this.writeJsonAtomic(join(this.root, "identity.json"), identity);
   }
 
+  /** Relay auth secrets, keyed by roomId. Kept in a sidecar file so room
+   *  snapshots can never leak a relay secret to members. */
+  async loadRelaySecrets(): Promise<Record<string, string>> {
+    return (await this.readJson(join(this.root, "relay-secrets.json"))) ?? {};
+  }
+
+  async saveRelaySecrets(secrets: Record<string, string>): Promise<void> {
+    await this.writeJsonAtomic(join(this.root, "relay-secrets.json"), secrets);
+  }
+
   /* ------------------------------ joined rooms ------------------------- */
 
   async loadJoined(): Promise<JoinedRoomRecord[]> {
