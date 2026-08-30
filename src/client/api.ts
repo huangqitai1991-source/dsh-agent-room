@@ -171,7 +171,7 @@ export function subscribeEvents(onEvent: (event: { kind: string; roomId?: string
     if (typeof EventSource === "undefined") return () => {};
     source = new EventSource("/agent-room-api/events");
     source.onmessage = () => {};
-    const kinds = ["chat", "task", "system", "connection", "members", "state"];
+    const kinds = ["chat", "task", "system", "connection", "members", "state", "activate-error"];
     for (const kind of kinds) {
       source.addEventListener(kind, (e) => {
         try {

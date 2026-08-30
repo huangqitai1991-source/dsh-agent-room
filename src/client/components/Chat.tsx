@@ -24,6 +24,10 @@ export interface ChatProps {
   onSendHuman(): void;
   onToggleTakeover(): void;
   onActivateChat(): void;
+  /** Persistent activate-chat error to show above the send bar (backend 500 /
+   *  async followup failure / timeout). Null hides the banner. */
+  activateError?: string | null;
+  onClearActivateError(): void;
   onLoadOlder(): void;
   onSearchChange(v: string): void;
 }
@@ -44,7 +48,7 @@ function highlight(text: string, query: string): React.ReactNode {
 }
 
 export function Chat(props: ChatProps): React.ReactElement {
-  const { room, messages, text, takeOver, thinking, search, loadingOlder, hasOlder, scrollRef } = props;
+  const { room, messages, text, takeOver, thinking, search, loadingOlder, hasOlder, scrollRef, activateError } = props;
   const query = search.trim().toLowerCase();
   const filtered = query
     ? messages.filter((m) => m.text.toLowerCase().includes(query) || m.fromNickname.toLowerCase().includes(query))
@@ -103,6 +107,20 @@ export function Chat(props: ChatProps): React.ReactElement {
           </div>
         )}
       </div>
+
+      {/* activate-chat error (persistent until dismissed or next activate) */}
+      {activateError && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px 0", fontSize: 12, color: THEME.red }}>
+          <span style={{ flex: 1 }}>⚠ {activateError}</span>
+          <button
+            onClick={props.onClearActivateError}
+            style={{ background: "none", border: "none", color: THEME.red, cursor: "pointer", fontSize: 14 }}
+            title="关闭提示"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* send bar */}
       <div style={{ display: "flex", gap: 8, padding: "8px 12px 10px", borderTop: `1px solid ${THEME.border}` }}>

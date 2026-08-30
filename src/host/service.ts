@@ -46,7 +46,8 @@ export type BrowserEvent =
   | { kind: "system"; roomId: string; event: SystemEvent }
   | { kind: "connection"; roomId: string; state: string }
   | { kind: "members"; roomId: string }
-  | { kind: "state" };
+  | { kind: "state" }
+  | { kind: "activate-error"; roomId: string; message: string };
 
 export function resolveConfig(config: AgentRoomConfig = {}): Required<Pick<AgentRoomConfig, "port" | "tools" | "skills">> & { dataDir: string; relay?: string } {
   const dshHome = process.env.DSH_HOME ?? join(homedir(), ".dsh");
@@ -63,6 +64,24 @@ declare module "@deepseek-ai/cordis" {
   interface Context {
     agentRoom: AgentRoomService;
   }
+}
+
+/** Minimal structural view of a live DSH agent (no hard dependency on
+ *  @deepseek-ai/dsh-agent at build time). */
+interface AgentLike {
+  readonly id?: string;
+  readonly sessionId?: string;
+  readonly status?: string;
+  followup?(message: unknown): unknown;
+  ctx?: { agent?: AgentLike };
+}
+
+/** Minimal structural view of the DSH agent registry (ctx.agents). */
+interface AgentRegistryLike {
+  list?(): AgentLike[];
+  roots?(): AgentLike[];
+  get?(id: string): AgentLike | undefined;
+  currentInitiator?(): AgentLike | undefined;
 }
 
 export class AgentRoomService extends Service {
@@ -137,22 +156,95 @@ export class AgentRoomService extends Service {
 
   /**
    * 激活聊天 (one-shot): mark the room as thinking and ask the resident agent
-   * to reply once with room_send based on the room context. Throws when the
-   * room is already thinking (the web layer maps that to HTTP 409).
+   * to reply once with room_send based on the room context. Resolves the
+   * resident agent synchronously so the web layer can return an explicit
+   * HTTP 500 when no agent is available (never silently clears thinking).
+   * Throws when the room is already thinking (HTTP 409) or no resident agent
+   * exists (HTTP 500).
    */
-  activateChat(roomId: string): void {
+  activateChat(roomId: string): { agentId?: string } {
     if (this.activateThinkingRooms.has(roomId)) {
       throw new Error("该房间正在思考中，请等待回复完成");
     }
     const identity = this.roomService.getIdentity();
     if (!identity) throw new Error("本机身份未就绪");
+    const agent = this.resolveResidentAgent(identity);
+    if (!agent) {
+      this.diag("activate-chat: rejecting " + roomId + " — no resident agent found");
+      throw new Error("未找到本机 agent，无法激活聊天（请确认 DSH agent 会话已就绪后重试）");
+    }
     this.activateThinkingRooms.add(roomId);
     this.emitBrowser({ kind: "state" });
-    void this.runActivateChat(roomId, identity);
+    void this.runActivateChat(roomId, identity, agent);
+    return { agentId: agent.id ?? agent.sessionId };
   }
 
-  /** Build the context prompt and drive the resident agent; clears thinking on failure. */
-  private async runActivateChat(roomId: string, identity: AgentIdentity): Promise<void> {
+  /** Diagnostic logger: always lands on stderr (console.error) so activate-chat
+   *  issues are visible in dsh-web-new.err.log even when ctx.logger is quiet.
+   *  Also mirrors to the cordis logger when available. */
+  private diag(message: string, ...args: unknown[]): void {
+    try {
+      console.error("[agent-room] " + message, ...args);
+    } catch {
+      /* logging must never throw */
+    }
+    try {
+      this.ctx.logger?.info?.("[agent-room] " + message, ...args);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** Structural view of the DSH agent registry (ctx.agents), if present. */
+  private agentsRegistry(): AgentRegistryLike | undefined {
+    return (this.ctx as unknown as { agents?: AgentRegistryLike }).agents;
+  }
+
+  /**
+   * Find the resident (local) agent that should reply to an activate-chat.
+   * Tries several registry entry points in order, logging each attempt:
+   * 1. ctx.agent — the scoped agent association when the service context is
+   *    agent-derived;
+   * 2. agents.currentInitiator() — the agent initiating the caller chain;
+   * 3. agents.get(identity.agentId) — the room identity, when it matches a
+   *    live session id;
+   * 4. agents.list()[0] / agents.roots()[0] — first live / top-level agent.
+   */
+  private resolveResidentAgent(identity: AgentIdentity): AgentLike | undefined {
+    const attempts: Array<[string, () => AgentLike | undefined]> = [
+      ["ctx.agent", () => (this.ctx as unknown as { agent?: AgentLike }).agent],
+      ["agents.currentInitiator()", () => {
+        const agents = this.agentsRegistry();
+        return typeof agents?.currentInitiator === "function" ? agents.currentInitiator() : undefined;
+      }],
+      ["agents.get(identity.agentId)", () => this.agentsRegistry()?.get?.(identity.agentId)],
+      ["agents.list()[0]", () => this.agentsRegistry()?.list?.()[0]],
+      ["agents.roots()[0]", () => this.agentsRegistry()?.roots?.()[0]],
+    ];
+    for (const [label, pick] of attempts) {
+      try {
+        const agent = pick();
+        if (agent && typeof agent.followup === "function") {
+          this.diag("activate-chat: resident agent found via " + label + " (id=" + (agent.id ?? agent.sessionId ?? "unknown") + ")");
+          return agent;
+        }
+      } catch (error) {
+        this.diag("activate-chat: agent lookup " + label + " threw: " + String(error));
+      }
+    }
+    const agents = this.agentsRegistry();
+    let listCount = -1;
+    let rootsCount = -1;
+    try { listCount = agents?.list?.().length ?? -1; } catch { /* ignore */ }
+    try { rootsCount = agents?.roots?.().length ?? -1; } catch { /* ignore */ }
+    this.diag("activate-chat: NO resident agent (registry=" + (agents ? "present" : "absent") + ", agents.list()=" + listCount + ", agents.roots()=" + rootsCount + ")");
+    return undefined;
+  }
+
+  /** Build the context prompt and drive the resident agent. Thinking is kept
+   *  until our own reply lands (noteOwnReply) or the flow fails explicitly. */
+  private async runActivateChat(roomId: string, identity: AgentIdentity, agent: AgentLike): Promise<void> {
+    const agentId = agent.id ?? agent.sessionId ?? "unknown";
     try {
       const owned = this.roomService.getOwnedRoom(roomId);
       const client = this.clients.get(roomId);
@@ -171,20 +263,46 @@ export class AgentRoomService extends Service {
         recent,
         tasks,
       });
-      const agents = (this.ctx as unknown as { agents?: { list(): Array<{ followup(message: unknown): unknown }> } }).agents;
-      const agent = agents?.list?.()[0];
-      if (!agent) {
-        this.ctx.logger?.warn?.("[agent-room] activate-chat: no resident agent available");
-        this.activateThinkingRooms.delete(roomId);
-        this.emitBrowser({ kind: "state" });
-        return;
-      }
-      this.ctx.logger?.info?.("[agent-room] activate-chat: dispatching followup for %s", roomId);
-      agent.followup(createUserMessage({ content: [{ type: "text", text: prompt }], source: { kind: "plugin", plugin: "dsh-agent-room" } }));
+      this.diag("activate-chat: dispatching followup for " + roomId + " to agent " + agentId);
+      agent.followup?.(createUserMessage({ content: [{ type: "text", text: prompt }], source: { kind: "plugin", plugin: "dsh-agent-room" } }));
+      this.diag("activate-chat: followup accepted for " + roomId + " — thinking stays on until own reply lands");
+      this.armActivateWatchdog(roomId);
     } catch (error) {
-      this.ctx.logger?.warn?.("[agent-room] activate-chat failed: %s", String(error));
-      this.activateThinkingRooms.delete(roomId);
-      this.emitBrowser({ kind: "state" });
+      this.failActivate(roomId, "激活聊天失败: " + String(error));
+    }
+  }
+
+  /** Clear thinking + notify the UI (stderr log + browser events) because the
+   *  activate-chat flow failed or timed out without a reply. */
+  private failActivate(roomId: string, message: string): void {
+    if (!this.activateThinkingRooms.has(roomId)) return;
+    this.diag("activate-chat: FAIL for " + roomId + " — " + message);
+    this.clearActivateTimer(roomId);
+    this.activateThinkingRooms.delete(roomId);
+    this.emitBrowser({ kind: "activate-error", roomId, message });
+    this.emitBrowser({ kind: "state" });
+  }
+
+  /** Safety net: if the agent never replies, stop waiting so the button does
+   *  not stay disabled forever. */
+  private static readonly ACTIVATE_REPLY_TIMEOUT_MS = 5 * 60 * 1000;
+  private readonly activateTimers = new Map<string, NodeJS.Timeout>();
+
+  private armActivateWatchdog(roomId: string): void {
+    this.clearActivateTimer(roomId);
+    const timer = setTimeout(() => {
+      this.activateTimers.delete(roomId);
+      this.failActivate(roomId, "激活聊天超时（" + AgentRoomService.ACTIVATE_REPLY_TIMEOUT_MS / 1000 + "s 内未收到本机回复）");
+    }, AgentRoomService.ACTIVATE_REPLY_TIMEOUT_MS);
+    try { timer.unref(); } catch { /* not available in all envs */ }
+    this.activateTimers.set(roomId, timer);
+  }
+
+  private clearActivateTimer(roomId: string): void {
+    const timer = this.activateTimers.get(roomId);
+    if (timer) {
+      clearTimeout(timer);
+      this.activateTimers.delete(roomId);
     }
   }
 
@@ -197,7 +315,8 @@ export class AgentRoomService extends Service {
     if (!this.activateThinkingRooms.has(roomId)) return;
     const identity = this.roomService.getIdentity();
     if (identity && message.from === identity.agentId) {
-      this.ctx.logger?.info?.("[agent-room] activate-chat: own reply landed in %s — thinking done", roomId);
+      this.diag("activate-chat: own reply landed in " + roomId + " (seq=" + message.seq + ") — thinking done");
+      this.clearActivateTimer(roomId);
       this.activateThinkingRooms.delete(roomId);
       this.emitBrowser({ kind: "state" });
     }
