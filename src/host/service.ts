@@ -7,12 +7,13 @@
  * started PeerServer for owned rooms.
  */
 
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir, hostname } from "node:os";
 import { Service } from "@deepseek-ai/cordis";
 import type { Context } from "@deepseek-ai/cordis";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
-import type { AgentIdentity, ChatMessage, JoinedRoomRecord, Room, RoomSettings, Task } from "../types.js";
+import type { AgentIdentity, ChatMessage, JoinedRoomRecord, Room, RoomSettings, SystemEvent, Task } from "../types.js";
 import { RoomService } from "./room-service.js";
 import { PeerServer } from "./peer-server.js";
 import { LanDiscovery } from "./discovery.js";
@@ -36,6 +37,16 @@ export interface AgentRoomConfig {
    *  rooms to it; members fall back to it when the owner is not reachable. */
   relay?: string;
 }
+
+/** Push event delivered to the browser UI (SSE); also used by the polling
+ *  fallback to know when something changed. */
+export type BrowserEvent =
+  | { kind: "chat"; roomId: string; message: ChatMessage }
+  | { kind: "task"; roomId: string; task: Task }
+  | { kind: "system"; roomId: string; event: SystemEvent }
+  | { kind: "connection"; roomId: string; state: string }
+  | { kind: "members"; roomId: string }
+  | { kind: "state" };
 
 export function resolveConfig(config: AgentRoomConfig = {}): Required<Pick<AgentRoomConfig, "port" | "tools" | "skills">> & { dataDir: string; relay?: string } {
   const dshHome = process.env.DSH_HOME ?? join(homedir(), ".dsh");
@@ -65,6 +76,16 @@ export class AgentRoomService extends Service {
   private readonly clients = new Map<string, RoomClient>();
   /** Rooms where the local agent auto-replies to incoming messages. */
   private readonly autoReplyRooms = new Set<string>();
+  /** Per joined room: live channel info (state, relay path, address). */
+  private readonly connInfo = new Map<string, { state: string; viaRelay: boolean; address: string }>();
+  /** Relay bridge status for owned rooms: roomId -> relayStatus(). */
+  private readonly relayBridge = new Map<string, "none" | "connecting" | "open" | "disconnected">();
+  /** Browser push subscribers (SSE). */
+  private readonly browserListeners = new Set<(event: BrowserEvent) => void>();
+  /** Persisted relay config file (dataDir/relay-config.json). */
+  private relayConfigFile = "";
+  /** Whether the relay was explicitly configured (config/env/file). */
+  private relayConfigured = false;
   /** Rooms with a followup already in flight, so the sweep doesn't double-reply. */
   private readonly autoReplyPending = new Set<string>();
   private autoReplyTimer: NodeJS.Timeout | null = null;
@@ -82,9 +103,17 @@ export class AgentRoomService extends Service {
       this.ctx.logger?.info?.("[agent-room] chat in %s from %s", roomId, message.from);
       // Immediate auto-reply trigger (the 3s sweep is the backstop).
       void this.sweepAutoReply();
+      this.emitBrowser({ kind: "chat", roomId, message });
     });
     this.roomService.on("task", (roomId, task) => {
       this.ctx.logger?.info?.("[agent-room] task %s -> %s in %s", task.title, task.status, roomId);
+      this.emitBrowser({ kind: "task", roomId, task });
+    });
+    this.roomService.on("system", (roomId, event) => this.emitBrowser({ kind: "system", roomId, event }));
+    this.roomService.on("members", (roomId) => this.emitBrowser({ kind: "members", roomId }));
+    this.roomService.on("roomState", () => {
+      this.refreshRelayBridge();
+      this.emitBrowser({ kind: "state" });
     });
 
     ctx.effect(() => {
@@ -159,6 +188,8 @@ export class AgentRoomService extends Service {
   }
 
   private async boot(): Promise<void> {
+    this.relayConfigFile = join(this.config.dataDir, "relay-config.json");
+    await this.loadRelayConfig();
     await this.roomService.boot();
     const identity = await this.roomService.ensureIdentity();
     // Auto-collect capabilities: map installed tools onto the 6-family taxonomy
@@ -193,6 +224,7 @@ export class AgentRoomService extends Service {
     try {
       const address = await this.ensurePeerServer();
       this.ctx.logger?.info?.("[agent-room] room server listening on %s", address);
+      this.refreshRelayBridge();
     } catch (error) {
       this.ctx.logger?.warn?.("[agent-room] room server failed to start: %s", String(error));
     }
@@ -285,7 +317,18 @@ export class AgentRoomService extends Service {
       await client.connect();
       const roomId = client.currentRoomId;
       if (!roomId) throw new Error("加入失败：未获得房间 id");
-      client.on("chat", () => void this.sweepAutoReply());
+      client.on("chat", (message) => {
+        void this.sweepAutoReply();
+        this.emitBrowser({ kind: "chat", roomId, message });
+      });
+      client.on("task", (task) => this.emitBrowser({ kind: "task", roomId, task }));
+      client.on("system", (event) => this.emitBrowser({ kind: "system", roomId, event }));
+      client.on("connection", (state) => {
+        this.connInfo.set(roomId, { state, viaRelay: client.viaRelay, address: client.address });
+        this.emitBrowser({ kind: "connection", roomId, state });
+      });
+      client.on("snapshot", () => this.emitBrowser({ kind: "state" }));
+      this.connInfo.set(roomId, { state: client.connState, viaRelay: client.viaRelay, address: client.address });
       this.clients.set(roomId, client);
       this.ctx.logger?.info?.("[agent-room] joined room %s at %s", roomId, client.address);
       return { roomId, title: client.snapshot?.room.title ?? "" };
@@ -299,6 +342,7 @@ export class AgentRoomService extends Service {
       if (!client) throw new Error(`房间不存在: ${roomId}`);
       await client.leave();
       this.clients.delete(roomId);
+      this.connInfo.delete(roomId);
     },
     kickMember: (roomId, agentId) => this.roomService.removeMember(roomId, agentId),
     revokeMember: async (roomId, agentId, reason) => {
@@ -423,6 +467,65 @@ export class AgentRoomService extends Service {
     throw new Error(`任务操作已发送，等待房主节点同步（可用 task_list 查看最新状态）`);
   }
 
+  /* --------------------------- relay config ---------------------------- */
+
+  private async loadRelayConfig(): Promise<void> {
+    try {
+      const text = await readFile(this.relayConfigFile, "utf8");
+      const data = JSON.parse(text) as { relay?: string | null };
+      // A persisted file wins over config/env so the UI change survives restarts.
+      this.config.relay = typeof data.relay === "string" && data.relay.trim() ? data.relay : undefined;
+    } catch {
+      /* first run: no persisted file yet */
+    }
+    this.relayConfigured = Boolean(this.config.relay);
+  }
+
+  /** Set (or clear) the cross-network relay address; persists to disk and re-bridges owned rooms. */
+  async setRelayConfig(relay?: string): Promise<string | undefined> {
+    const next = relay?.trim() || undefined;
+    this.config.relay = next;
+    this.relayConfigured = Boolean(next);
+    try {
+      await writeFile(this.relayConfigFile, JSON.stringify({ relay: next ?? null }, null, 2), "utf8");
+    } catch (error) {
+      this.ctx.logger?.warn?.("[agent-room] failed to persist relay config: %s", String(error));
+    }
+    if (this.peerServer) this.peerServer.setRelay(next);
+    this.refreshRelayBridge();
+    this.emitBrowser({ kind: "state" });
+    return next;
+  }
+
+  getRelayConfig(): { address?: string; configured: boolean } {
+    return { address: this.config.relay, configured: this.relayConfigured };
+  }
+
+  private refreshRelayBridge(): void {
+    if (!this.peerServer) return;
+    for (const room of this.roomService.listOwnedRooms()) {
+      this.relayBridge.set(room.roomId, this.peerServer.relayStatus(room.roomId));
+    }
+  }
+
+  /* --------------------------- browser push ---------------------------- */
+
+  /** Subscribe to browser push events (SSE); returns an unsubscribe function. */
+  onBrowserEvent(listener: (event: BrowserEvent) => void): () => void {
+    this.browserListeners.add(listener);
+    return () => this.browserListeners.delete(listener);
+  }
+
+  private emitBrowser(event: BrowserEvent): void {
+    for (const listener of this.browserListeners) {
+      try {
+        listener(event);
+      } catch {
+        /* listener errors must not break the room loop */
+      }
+    }
+  }
+
   /* --------------------------- browser state --------------------------- */
 
   /** Full state snapshot for the browser UI. */
@@ -433,27 +536,47 @@ export class AgentRoomService extends Service {
       .filter(([, client]) => client.snapshot !== null)
       .map(([, client]) => client.snapshot!.room);
 
-    const rooms = [...owned, ...joinedRooms].map((room) => ({
-      roomId: room.roomId,
-      title: room.title,
-      type: room.type,
-      status: room.status,
-      owned: room.ownerAgentId === identity.agentId,
-      authMode: room.settings.authMode,
-      autoMode: room.settings.autoMode,
-      allowHumanTakeover: room.settings.allowHumanTakeover,
-      controllerAgentId: room.controllerAgentId,
-      serverAddress: room.ownerAgentId === identity.agentId ? this.peerServer?.address ?? room.serverAddress : room.serverAddress,
-      memberCount: room.members.length,
-      members: room.members,
-      tasks: room.tasks,
-      revoked: room.revoked ?? [],
-      autoReply: this.autoReplyRooms.has(room.roomId),
-    }));
+    const joinedLatest = new Map<string, number>();
+    for (const [roomId, client] of this.clients) {
+      const msgs = client.snapshot?.recentMessages ?? [];
+      joinedLatest.set(roomId, msgs.length > 0 ? msgs[msgs.length - 1]!.seq : 0);
+    }
+    const rooms: Array<Record<string, unknown>> = [];
+    for (const room of [...owned, ...joinedRooms]) {
+      const isOwned = room.ownerAgentId === identity.agentId;
+      const info = this.connInfo.get(room.roomId);
+      const bridgeState = isOwned ? this.relayBridge.get(room.roomId) ?? "none" : info?.state ?? "connecting";
+      const bridge = isOwned
+        ? { kind: (bridgeState === "none" ? "none" : "relay") as "none" | "relay", state: bridgeState, address: this.config.relay }
+        : { kind: (info?.viaRelay ? "relay" : "direct") as "relay" | "direct", state: info?.state ?? "connecting", address: info?.address ?? room.serverAddress };
+      const latestSeq = isOwned
+        ? ((await this.roomService.recentMessages(room.roomId, 1))[0]?.seq ?? 0)
+        : (joinedLatest.get(room.roomId) ?? 0);
+      rooms.push({
+        roomId: room.roomId,
+        title: room.title,
+        type: room.type,
+        status: room.status,
+        owned: isOwned,
+        authMode: room.settings.authMode,
+        autoMode: room.settings.autoMode,
+        allowHumanTakeover: room.settings.allowHumanTakeover,
+        controllerAgentId: room.controllerAgentId,
+        serverAddress: isOwned ? this.peerServer?.address ?? room.serverAddress : room.serverAddress,
+        memberCount: room.members.length,
+        members: room.members,
+        tasks: room.tasks,
+        revoked: room.revoked ?? [],
+        autoReply: this.autoReplyRooms.has(room.roomId),
+        latestSeq,
+        bridge,
+      });
+    }
     const discovered: RoomBeacon[] = this.discovery?.discovered() ?? [];
     return {
       identity,
       node: { hostname: hostname(), addresses: this.peerServer?.candidates ?? [] },
+      relay: { address: this.config.relay, configured: this.relayConfigured },
       discovered,
       rooms,
     };

@@ -50,6 +50,7 @@ export class RoomClient extends EventEmitter {
   private socket: WebSocket | null = null;
   private left = false;
   private usingRelay = false;
+  private connectionState: "connecting" | "open" | "reconnecting" | "closed" = "connecting";
   private reconnectAttempt = 0;
   private heartbeat: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
@@ -76,6 +77,21 @@ export class RoomClient extends EventEmitter {
     return this.roomId;
   }
 
+  /** True when the channel to the owner goes through the relay (D7). */
+  get viaRelay(): boolean {
+    return this.usingRelay;
+  }
+
+  /** Current connection state of the room channel. */
+  get connState(): "connecting" | "open" | "reconnecting" | "closed" {
+    return this.connectionState;
+  }
+
+  private setConnection(state: "connecting" | "open" | "reconnecting" | "closed"): void {
+    this.connectionState = state;
+    this.emit("connection", state);
+  }
+
   override on<K extends keyof RoomClientEvents>(event: K, listener: RoomClientEvents[K]): this {
     return super.on(event, listener);
   }
@@ -87,7 +103,7 @@ export class RoomClient extends EventEmitter {
   /** Full join flow: direct HTTP handshake first, relay fallback when configured. */
   async connect(): Promise<void> {
     this.left = false;
-    this.emit("connection", "connecting");
+    this.setConnection("connecting");
     if (!this.usingRelay) {
       try {
         const join = await this.httpJoin();
@@ -173,7 +189,7 @@ export class RoomClient extends EventEmitter {
               title: this.snapshot?.room.title ?? "",
               lastVisitedAt: nowIso(),
             });
-            this.emit("connection", "open");
+            this.setConnection("open");
             resolve();
           } else {
             reject(new Error(`relay auth rejected: ${frame.payload?.error ?? "unauthorized"}`));
@@ -190,8 +206,8 @@ export class RoomClient extends EventEmitter {
           reject(new Error("中继连接中断"));
           return;
         }
-        if (this.left) { this.emit("connection", "closed"); return; }
-        this.emit("connection", "reconnecting");
+        if (this.left) { this.setConnection("closed"); return; }
+        this.setConnection("reconnecting");
         this.scheduleReconnect();
       });
       socket.on("error", () => { });
@@ -250,17 +266,17 @@ export class RoomClient extends EventEmitter {
     this.socket = socket;
     socket.on("open", () => {
       this.reconnectAttempt = 0;
-      this.emit("connection", "open");
+      this.setConnection("open");
       this.sendFrame({ type: "hello", payload: { token: this.token! } });
     });
     socket.on("message", (data) => this.handleFrame(String(data)));
     socket.on("close", () => {
       this.clearHeartbeat();
       if (this.left) {
-        this.emit("connection", "closed");
+        this.setConnection("closed");
         return;
       }
-      this.emit("connection", "reconnecting");
+      this.setConnection("reconnecting");
       this.scheduleReconnect();
     });
     socket.on("error", () => {
@@ -275,7 +291,7 @@ export class RoomClient extends EventEmitter {
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.left) return;
-      this.emit("connection", "connecting");
+      this.setConnection("connecting");
       // Re-run the full handshake (not just openSocket): the owner may have
       // restarted, which invalidates the old token and resets nothing else we
       // can reuse. A fresh join also rebuilds the local snapshot, so the seq
@@ -284,10 +300,10 @@ export class RoomClient extends EventEmitter {
         const message = error instanceof Error ? error.message : String(error);
         if (message.startsWith("join rejected")) {
           // Terminal: room is gone/closed/full — no point retrying.
-          this.emit("connection", "closed");
+          this.setConnection("closed");
           return;
         }
-        this.emit("connection", "reconnecting");
+        this.setConnection("reconnecting");
         this.scheduleReconnect();
       });
     }, delay);
@@ -399,7 +415,7 @@ export class RoomClient extends EventEmitter {
       this.socket.close(1000, "left");
     }
     this.socket = null;
-    this.emit("connection", "closed");
+    this.setConnection("closed");
   }
 
   destroy(): void {

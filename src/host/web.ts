@@ -29,6 +29,21 @@ export function createRouter(service: AgentRoomService): Handler {
         return sendJson(response, 200, { ok: true, data: state });
       }
 
+      // Server-sent events: real-time push for the room dock (polling fallback stays).
+      if (method === "GET" && path === "/agent-room-api/events") {
+        return streamEvents(service, response);
+      }
+
+      if (method === "GET" && path === "/agent-room-api/relay-config") {
+        return sendJson(response, 200, { ok: true, data: service.getRelayConfig() });
+      }
+
+      if (method === "POST" && path === "/agent-room-api/relay-config") {
+        const body = (await readJson(request)) as { relay?: string };
+        const relay = await service.setRelayConfig(body.relay);
+        return sendJson(response, 200, { ok: true, data: { relay: relay ?? null } });
+      }
+
       const messagesMatch = /^\/agent-room-api\/rooms\/([^/]+)\/messages$/.exec(path);
       if (method === "GET" && messagesMatch) {
         const before = url.searchParams.get("before");
@@ -185,6 +200,7 @@ export function createRouter(service: AgentRoomService): Handler {
         const taskId = decodeURIComponent(taskAction[2]!);
         const action = taskAction[3]!;
         const body = (await readJson(request)) as Record<string, unknown>;
+        try {
         switch (action) {
           case "assign":
             await service.gateway.taskAssign(roomId, taskId, String(body.assignee ?? ""));
@@ -221,6 +237,15 @@ export function createRouter(service: AgentRoomService): Handler {
           case "remove":
             await service.gateway.taskDelete(roomId, taskId);
             break;
+        }
+        } catch (err) {
+          const message = (err as Error).message;
+          // Joined-room actions are fire-and-forget; a missing projected task just
+          // means the owner hasn't synced yet — treat as sent (the UI re-polls).
+          if (message.includes("任务操作已发送")) {
+            return sendJson(response, 200, { ok: true, data: { sent: true } });
+          }
+          throw err;
         }
         return sendJson(response, 200, { ok: true });
       }
@@ -264,6 +289,36 @@ export const webPlugin = {
     );
   },
 };
+
+/** Keep an SSE stream open and forward browser events until the client disconnects. */
+function streamEvents(service: AgentRoomService, response: ServerResponse): void {
+  response.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-store",
+    connection: "keep-alive",
+  });
+  response.write(": connected\n\n");
+  const unsubscribe = service.onBrowserEvent((event) => {
+    try {
+      response.write(`event: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`);
+    } catch {
+      /* client gone */
+    }
+  });
+  const heartbeat = setInterval(() => {
+    try {
+      response.write(`: ping ${Date.now()}\n\n`);
+    } catch {
+      /* client gone */
+    }
+  }, 15_000);
+  const done = () => {
+    clearInterval(heartbeat);
+    unsubscribe();
+  };
+  response.on("close", done);
+  response.on("error", done);
+}
 
 function sendJson(response: ServerResponse, status: number, value: unknown): void {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });

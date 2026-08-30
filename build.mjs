@@ -11,7 +11,7 @@
  */
 
 import ts from "typescript";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -70,7 +70,64 @@ compile(join(root, "src/client/index.tsx"), {
   rootDir: join(root, "src"),
 });
 
-const bundleText = await readFile(join(clientBuildDir, "client/index.js"), "utf8");
+// Inline every emitted client module into one factory body: the browser
+// ModuleLoader's synchronous require only resolves registered bundle ids /
+// seed modules (react), so relative requires would fail at runtime. We assign
+// each module a key (path relative to src/client, no extension) and provide a
+// tiny local require that resolves relative specifiers against that registry
+// while passing bare specifiers ("react") through to the loader's require.
+const clientOutRoot = join(clientBuildDir, "client");
+const emittedFiles = [];
+async function walkClient(dir) {
+  for (const entry of await readdir(dir)) {
+    const full = join(dir, entry);
+    const info = await statPath(full);
+    if (info.isDirectory()) await walkClient(full);
+    else if (entry.endsWith(".js")) emittedFiles.push(full);
+  }
+}
+await walkClient(clientOutRoot);
+const moduleFactories = [];
+for (const file of emittedFiles.sort()) {
+  const relative = relativePath(clientOutRoot, file).replace(/\\/g, "/").replace(/\.js$/, "");
+  const source = await readFile(file, "utf8");
+  moduleFactories.push({ key: relative, source });
+}
+const entryFactory = moduleFactories.find((m) => m.key === "index");
+const rest = moduleFactories.filter((m) => m.key !== "index");
+const orderedFactories = entryFactory ? [entryFactory, ...rest] : moduleFactories;
+const bundleLines = [
+  "var __arModules = {};",
+  "function __arResolve(from, spec) {",
+  "  var parts = from.split('/'); parts.pop();",
+  "  for (var i = 0; i < spec.split('/').length; i++) {",
+  "    var seg = spec.split('/')[i];",
+  "    if (seg === '.' || seg === '') continue;",
+  "    if (seg === '..') parts.pop(); else parts.push(seg);",
+  "  }",
+  "  var key = parts.join('/');",
+  "  key = key.replace(/\.(js|ts|tsx)$/, '');",
+  "  return key;",
+  "}",
+  "function __arRequire(from, spec) {",
+  "  if (spec.charAt(0) !== '.') return require(spec);",
+  "  var key = __arResolve(from, spec);",
+  "  var mod = __arModules[key];",
+  "  if (!mod) throw new Error('dsh-agent-room: cannot resolve ' + spec + ' from ' + from);",
+  "  if (!mod.loaded) {",
+  "    mod.loaded = true; mod.exports = {};",
+  "    mod.factory(function (s) { return __arRequire(key, s); }, mod.exports, mod);",
+  "  }",
+  "  return mod.exports;",
+  "}",
+];
+for (const m of orderedFactories) {
+  bundleLines.push("__arModules[" + JSON.stringify(m.key) + "] = { loaded: false, exports: {}, factory: function (require, exports, module) {");
+  bundleLines.push(m.source);
+  bundleLines.push("} };");
+}
+bundleLines.push("module.exports = __arRequire('index', './index');");
+const bundleText = bundleLines.join("\n");
 // dsh's browser module system calls factory(require) with a single argument;
 // `module`/`exports` are NOT in scope. Declare them inside the factory exactly
 // like every shipped dsh bundle (see dsh-client-modules' own lib/client.js),
@@ -88,6 +145,27 @@ ${bundleText}
 `;
 await writeFile(join(outDir, "client.js"), wrapped, "utf8");
 await rm(clientBuildDir, { recursive: true, force: true });
+
+/** Stat with graceful handling for sandboxed FS quirks (returns null on error). */
+async function statPath(p) {
+  try {
+    return await stat(p);
+  } catch {
+    return { isDirectory: () => false };
+  }
+}
+
+/** posix-style relative path from base to target. */
+function relativePath(base, target) {
+  const b = base.split(/[\\/]/).filter(Boolean);
+  const t = target.split(/[\\/]/).filter(Boolean);
+  let i = 0;
+  while (i < b.length && i < t.length && b[i] === t[i]) i += 1;
+  const up = b.length - i;
+  const parts = [];
+  for (let k = 0; k < up; k += 1) parts.push("..");
+  return parts.concat(t.slice(i)).join("/") || ".";
+}
 
 // ---- skills ----
 await cp(join(root, "src/skills"), join(outDir, "skills"), { recursive: true });
