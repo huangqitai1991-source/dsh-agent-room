@@ -1,6 +1,6 @@
 /**
  * dsh-agent-room — Chat tab: message stream with seq pagination ("load older"),
- * client-side search, and the send bar (agent / human takeover / auto-reply).
+ * client-side search, and the send bar (agent / human takeover / activate-chat).
  */
 import * as React from "react";
 import type { ApiMessage, ApiRoom } from "../api";
@@ -12,7 +12,8 @@ export interface ChatProps {
   messages: ApiMessage[];
   text: string;
   takeOver: boolean;
-  autoReply: boolean;
+  /** True while the local agent is thinking for this room (activate-chat in flight). */
+  thinking: boolean;
   search: string;
   loadingOlder: boolean;
   hasOlder: boolean;
@@ -22,7 +23,7 @@ export interface ChatProps {
   onSend(): void;
   onSendHuman(): void;
   onToggleTakeover(): void;
-  onToggleAutoReply(): void;
+  onActivateChat(): void;
   onLoadOlder(): void;
   onSearchChange(v: string): void;
 }
@@ -43,7 +44,7 @@ function highlight(text: string, query: string): React.ReactNode {
 }
 
 export function Chat(props: ChatProps): React.ReactElement {
-  const { room, messages, text, takeOver, autoReply, search, loadingOlder, hasOlder, scrollRef } = props;
+  const { room, messages, text, takeOver, thinking, search, loadingOlder, hasOlder, scrollRef } = props;
   const query = search.trim().toLowerCase();
   const filtered = query
     ? messages.filter((m) => m.text.toLowerCase().includes(query) || m.fromNickname.toLowerCase().includes(query))
@@ -114,11 +115,12 @@ export function Chat(props: ChatProps): React.ReactElement {
           onKeyDown={(e) => e.key === "Enter" && (takeOver ? props.onSendHuman() : props.onSend())}
         />
         <Btn
-          variant={autoReply ? "danger" : "ghost"}
-          title={autoReply ? "当前自动回复中，点击停止" : "开启后收到对方消息自动回复"}
-          onClick={props.onToggleAutoReply}
+          variant="primary"
+          disabled={thinking}
+          title={thinking ? "本机 agent 正在思考中，回复完成后可再次激活" : "点击后本机 agent 基于房间上下文自动回复一条"}
+          onClick={props.onActivateChat}
         >
-          {autoReply ? "■ 停止回复" : "自动回复"}
+          {thinking ? "⏳ 思考中…" : "💬 激活聊天"}
         </Btn>
         <Btn variant="ghost" onClick={props.onToggleTakeover} title="接管本机 agent 席位">
           {takeOver ? "释放接管" : "人类接管"}

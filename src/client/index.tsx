@@ -11,7 +11,7 @@
 
 import * as React from "react";
 import {
-  api, friendlyError, messagesApi, relayConfigApi, stateApi, subscribeEvents,
+  activateChatApi, api, friendlyError, messagesApi, relayConfigApi, stateApi, subscribeEvents,
   type ApiMessage, type ApiRoom, type ApiTask, type RoomState,
 } from "./api";
 import { GLOBAL_CSS, THEME, bridgeLabel } from "./theme";
@@ -32,6 +32,8 @@ function RoomDock(): React.ReactElement {
   const [hasOlder, setHasOlder] = React.useState(false);
   const [loadingOlder, setLoadingOlder] = React.useState(false);
   const [takeover, setTakeover] = React.useState(false);
+  /** Optimistic activate-thinking flags per room (server state is the source of truth). */
+  const [thinkingRooms, setThinkingRooms] = React.useState<Record<string, boolean>>({});
   const [text, setText] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [open, setOpen] = React.useState(false);
@@ -235,6 +237,16 @@ function RoomDock(): React.ReactElement {
             return next;
           });
           baselineRef.current = true;
+          // Drop optimistic thinking flags once the server confirms the reply
+          // landed (activateThinking back to false) — button becomes clickable.
+          setThinkingRooms((prev) => {
+            if (Object.keys(prev).length === 0) return prev;
+            const next = { ...prev };
+            for (const room of s.rooms) {
+              if (!room.activateThinking && next[room.roomId]) delete next[room.roomId];
+            }
+            return next;
+          });
           // Task assignment notifications.
           for (const room of s.rooms) {
             for (const task of room.tasks) {
@@ -632,13 +644,27 @@ function RoomDock(): React.ReactElement {
       })
       .catch(() => {});
   };
-  const toggleAutoReply = () => {
+  /** 激活聊天: one-shot — button flips to 思考中 immediately, server state
+   *  (poll + SSE) restores it once our own reply lands. */
+  const activateChat = () => {
     if (!activeRoom) return;
-    const next = !activeRoom.autoReply;
-    void post(`/agent-room-api/rooms/${encodeURIComponent(activeRoom.roomId)}/auto-reply`, { on: next })
-      .then(() => window.setTimeout(() => stateApi().then(setState).catch(() => {}), 300))
-      .catch(() => {});
+    const roomId = activeRoom.roomId;
+    setThinkingRooms((prev) => ({ ...prev, [roomId]: true }));
+    void activateChatApi(roomId)
+      .then(() => refreshState())
+      .catch((err: Error) => {
+        setThinkingRooms((prev) => {
+          const next = { ...prev };
+          delete next[roomId];
+          return next;
+        });
+        setError(friendlyError(err.message));
+      });
   };
+
+  /** Effective thinking state: optimistic flag wins until the server confirms. */
+  const roomThinking = (roomId: string): boolean =>
+    thinkingRooms[roomId] ?? Boolean(state?.rooms.find((r) => r.roomId === roomId)?.activateThinking);
 
   const selectRoom = (roomId: string) => {
     setActiveRoomId(roomId);
@@ -799,7 +825,7 @@ function RoomDock(): React.ReactElement {
                     {activeRoom.serverAddress}
                   </span>
                 )}
-                {activeRoom.autoReply && <Pill color={THEME.red} bg={THEME.redSoft}>自动回复中</Pill>}
+                {roomThinking(activeRoom.roomId) && <Pill color={THEME.amber} bg={THEME.amberSoft}>⏳ 思考中</Pill>}
               </div>
 
               {/* tabs */}
@@ -839,7 +865,7 @@ function RoomDock(): React.ReactElement {
                     messages={messages}
                     text={text}
                     takeOver={takeover}
-                    autoReply={Boolean(activeRoom.autoReply)}
+                    thinking={roomThinking(activeRoom.roomId)}
                     search={chatSearch}
                     loadingOlder={loadingOlder}
                     hasOlder={hasOlder}
@@ -849,7 +875,7 @@ function RoomDock(): React.ReactElement {
                     onSend={() => sendChat(false)}
                     onSendHuman={() => sendChat(true)}
                     onToggleTakeover={() => setTakeover((v) => !v)}
-                    onToggleAutoReply={toggleAutoReply}
+                    onActivateChat={activateChat}
                     onLoadOlder={loadOlder}
                     onSearchChange={setChatSearch}
                   />

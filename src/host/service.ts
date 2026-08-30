@@ -74,8 +74,9 @@ export class AgentRoomService extends Service {
   private discovery: LanDiscovery | null = null;
   /** Joined (remote) rooms, keyed by roomId. */
   private readonly clients = new Map<string, RoomClient>();
-  /** Rooms where the local agent auto-replies to incoming messages. */
-  private readonly autoReplyRooms = new Set<string>();
+  /** Rooms where the local agent is currently "thinking" (activate-chat one-shot
+   *  in flight); one thinking per room, cleared when our own reply lands. */
+  private readonly activateThinkingRooms = new Set<string>();
   /** Per joined room: live channel info (state, relay path, address). */
   private readonly connInfo = new Map<string, { state: string; viaRelay: boolean; address: string }>();
   /** Relay bridge status for owned rooms: roomId -> relayStatus(). */
@@ -86,9 +87,6 @@ export class AgentRoomService extends Service {
   private relayConfigFile = "";
   /** Whether the relay was explicitly configured (config/env/file). */
   private relayConfigured = false;
-  /** Rooms with a followup already in flight, so the sweep doesn't double-reply. */
-  private readonly autoReplyPending = new Set<string>();
-  private autoReplyTimer: NodeJS.Timeout | null = null;
   private profileTimer: NodeJS.Timeout | null = null;
 
   constructor(ctx: Context, config: AgentRoomConfig = {}) {
@@ -101,9 +99,8 @@ export class AgentRoomService extends Service {
 
     this.roomService.on("chat", (roomId, message) => {
       this.ctx.logger?.info?.("[agent-room] chat in %s from %s", roomId, message.from);
-      // Immediate auto-reply trigger (the 3s sweep is the backstop).
-      void this.sweepAutoReply();
       this.emitBrowser({ kind: "chat", roomId, message });
+      this.noteOwnReply(roomId, message);
     });
     this.roomService.on("task", (roomId, task) => {
       this.ctx.logger?.info?.("[agent-room] task %s -> %s in %s", task.title, task.status, roomId);
@@ -124,66 +121,85 @@ export class AgentRoomService extends Service {
     }, "agent-room: boot");
   }
 
-  /** Latest message in a room (owned via store, joined via client snapshot). */
-  private async lastMessageFor(roomId: string): Promise<ChatMessage | undefined> {
+  /** Recent messages for a room (owned via store, joined via client snapshot). */
+  private async recentMessagesFor(roomId: string, limit: number): Promise<ChatMessage[]> {
     const owned = this.roomService.getOwnedRoom(roomId);
-    if (owned) {
-      const recent = await this.roomService.recentMessages(roomId, 1);
-      return recent[recent.length - 1];
-    }
+    if (owned) return this.roomService.recentMessages(roomId, limit);
     const client = this.clients.get(roomId);
-    const recent = client?.snapshot?.recentMessages ?? [];
-    return recent[recent.length - 1];
+    const all = client?.snapshot?.recentMessages ?? [];
+    return all.slice(-limit);
   }
 
-  /** Drive the local agent to reply to a peer message. */
-  private dispatchAutoReply(roomId: string, message: ChatMessage): void {
+  /** True while the local agent is thinking for this room (activate-chat in flight). */
+  isActivateThinking(roomId: string): boolean {
+    return this.activateThinkingRooms.has(roomId);
+  }
+
+  /**
+   * 激活聊天 (one-shot): mark the room as thinking and ask the resident agent
+   * to reply once with room_send based on the room context. Throws when the
+   * room is already thinking (the web layer maps that to HTTP 409).
+   */
+  activateChat(roomId: string): void {
+    if (this.activateThinkingRooms.has(roomId)) {
+      throw new Error("该房间正在思考中，请等待回复完成");
+    }
     const identity = this.roomService.getIdentity();
-    if (!identity || message.from === identity.agentId) return;
-    this.autoReplyPending.add(roomId);
+    if (!identity) throw new Error("本机身份未就绪");
+    this.activateThinkingRooms.add(roomId);
+    this.emitBrowser({ kind: "state" });
+    void this.runActivateChat(roomId, identity);
+  }
+
+  /** Build the context prompt and drive the resident agent; clears thinking on failure. */
+  private async runActivateChat(roomId: string, identity: AgentIdentity): Promise<void> {
     try {
+      const owned = this.roomService.getOwnedRoom(roomId);
+      const client = this.clients.get(roomId);
+      const room = owned ?? client?.snapshot?.room;
+      if (!room) throw new Error(`房间不存在: ${roomId}`);
+      const [recent, tasks] = await Promise.all([
+        this.recentMessagesFor(roomId, 50),
+        Promise.resolve(room.tasks),
+      ]);
+      const member = room.members.find((m) => m.agentId === identity.agentId);
+      const role = member?.roles?.length ? member.roles.join("、") : member?.role ?? "member";
+      const prompt = buildActivatePrompt({
+        title: room.title,
+        identity,
+        role,
+        recent,
+        tasks,
+      });
       const agents = (this.ctx as unknown as { agents?: { list(): Array<{ followup(message: unknown): unknown }> } }).agents;
       const agent = agents?.list?.()[0];
       if (!agent) {
-        this.ctx.logger?.warn?.("[agent-room] auto-reply: no resident agent available");
-        this.autoReplyPending.delete(roomId);
+        this.ctx.logger?.warn?.("[agent-room] activate-chat: no resident agent available");
+        this.activateThinkingRooms.delete(roomId);
+        this.emitBrowser({ kind: "state" });
         return;
       }
-      const prompt = `房间「${this.roomService.getOwnedRoom(roomId)?.title ?? roomId}」收到 ${message.fromNickname} 的消息:「${message.text}」。你开启了自动回复,请用 room_send 工具向该房间自然、简短地回复。`;
+      this.ctx.logger?.info?.("[agent-room] activate-chat: dispatching followup for %s", roomId);
       agent.followup(createUserMessage({ content: [{ type: "text", text: prompt }], source: { kind: "plugin", plugin: "dsh-agent-room" } }));
-      // Clear the in-flight guard after a generous window; a later sweep re-arms
-      // if the reply never landed (e.g. the followup was silently dropped).
-      setTimeout(() => this.autoReplyPending.delete(roomId), 60_000);
     } catch (error) {
-      this.autoReplyPending.delete(roomId);
-      this.ctx.logger?.warn?.("[agent-room] auto-reply failed: %s", String(error));
+      this.ctx.logger?.warn?.("[agent-room] activate-chat failed: %s", String(error));
+      this.activateThinkingRooms.delete(roomId);
+      this.emitBrowser({ kind: "state" });
     }
   }
 
   /**
-   * Auto-reply sweep: for each enabled room, reply only when the latest message
-   * is from a peer (i.e. it is still unanswered); otherwise wait. Catches up on
-   * messages that arrived while auto-reply was off, and never double-replies.
+   * Detect the end of an activate-chat thinking: once OUR OWN message (sent via
+   * room_send) shows up in the room stream, the reply has landed — clear the
+   * thinking state so the button becomes clickable again.
    */
-  private async sweepAutoReply(): Promise<void> {
+  private noteOwnReply(roomId: string, message: ChatMessage): void {
+    if (!this.activateThinkingRooms.has(roomId)) return;
     const identity = this.roomService.getIdentity();
-    if (!identity) return;
-    for (const roomId of this.autoReplyRooms) {
-      if (this.autoReplyPending.has(roomId)) continue;
-      const last = await this.lastMessageFor(roomId);
-      if (last && last.from !== identity.agentId) this.dispatchAutoReply(roomId, last);
-    }
-  }
-
-  /** Turn auto-reply on/off for a room (owned or joined). */
-  setAutoReply(roomId: string, on: boolean): void {
-    if (on) {
-      this.autoReplyRooms.add(roomId);
-      // Catch up immediately: if there is an unanswered peer message, reply now.
-      void this.sweepAutoReply();
-    } else {
-      this.autoReplyRooms.delete(roomId);
-      this.autoReplyPending.delete(roomId);
+    if (identity && message.from === identity.agentId) {
+      this.ctx.logger?.info?.("[agent-room] activate-chat: own reply landed in %s — thinking done", roomId);
+      this.activateThinkingRooms.delete(roomId);
+      this.emitBrowser({ kind: "state" });
     }
   }
 
@@ -253,8 +269,6 @@ export class AgentRoomService extends Service {
     } catch (error) {
       this.ctx.logger?.warn?.("[agent-room] LAN discovery unavailable: %s", String(error));
     }
-    // Auto-reply sweep: reply to unanswered peer messages in enabled rooms.
-    this.autoReplyTimer = setInterval(() => void this.sweepAutoReply(), 3_000);
     // Push our live profile (nickname/capabilities) to joined rooms so member
     // lists reflect identity edits on the owner's side.
     this.profileTimer = setInterval(() => void this.syncProfile(), 15_000);
@@ -318,8 +332,8 @@ export class AgentRoomService extends Service {
       const roomId = client.currentRoomId;
       if (!roomId) throw new Error("加入失败：未获得房间 id");
       client.on("chat", (message) => {
-        void this.sweepAutoReply();
         this.emitBrowser({ kind: "chat", roomId, message });
+        this.noteOwnReply(roomId, message);
       });
       client.on("task", (task) => this.emitBrowser({ kind: "task", roomId, task }));
       client.on("system", (event) => this.emitBrowser({ kind: "system", roomId, event }));
@@ -353,7 +367,6 @@ export class AgentRoomService extends Service {
       const identity = await this.roomService.ensureIdentity();
       return this.roomService.unrevokeMember(roomId, identity, agentId);
     },
-    setAutoReply: (roomId, on) => this.setAutoReply(roomId, on),
     sendChat: async (roomId, input) => {
       const owned = this.roomService.getOwnedRoom(roomId);
       if (owned) {
@@ -567,7 +580,7 @@ export class AgentRoomService extends Service {
         members: room.members,
         tasks: room.tasks,
         revoked: room.revoked ?? [],
-        autoReply: this.autoReplyRooms.has(room.roomId),
+        activateThinking: this.activateThinkingRooms.has(room.roomId),
         latestSeq,
         bridge,
       });
@@ -591,4 +604,45 @@ export class AgentRoomService extends Service {
     const filtered = before === undefined ? all : all.filter((m) => m.seq < before);
     return filtered.slice(-limit);
   }
+}
+
+/* ------------------------- activate-chat prompt ------------------------ */
+
+/**
+ * Build the context prompt for a one-shot activate-chat reply: identity, role,
+ * open tasks, and the recent message stream so the agent can reply relevantly
+ * (quoting prior chat / tasks / @mentions).
+ */
+function buildActivatePrompt(input: {
+  title: string;
+  identity: AgentIdentity;
+  role: string;
+  recent: ChatMessage[];
+  tasks: Task[];
+}): string {
+  const lines: string[] = [];
+  lines.push(`你在房间「${input.title}」中被手动激活聊天，请基于房间上下文自然回复一条相关内容。`);
+  lines.push(`你的身份：${input.identity.nickname}（agentId: ${input.identity.agentId}，角色: ${input.role}，能力: ${input.identity.capabilities.join("、") || "无"}）。`);
+  if (input.tasks.length > 0) {
+    lines.push(`当前任务（${input.tasks.length} 个）：`);
+    for (const t of input.tasks.slice(0, 10)) {
+      const assignee = t.assignee ? `（负责人: ${t.assignee}）` : "";
+      const acceptance = t.acceptance ? ` 验收: ${t.acceptance}` : "";
+      lines.push(`- [${t.status}] ${t.title}${assignee}${acceptance}`);
+    }
+  } else {
+    lines.push("当前房间没有任务。");
+  }
+  if (input.recent.length > 0) {
+    lines.push(`最近消息（${input.recent.length} 条）：`);
+    for (const m of input.recent) {
+      const human = m.human ? " [人类]" : "";
+      const mention = m.mentions && m.mentions.length > 0 ? ` @[${m.mentions.join(",")}]` : "";
+      lines.push(`- ${m.fromNickname}${human}: ${m.text}${mention}`);
+    }
+  } else {
+    lines.push("房间还没有消息。");
+  }
+  lines.push("请用 room_send 工具向该房间发送一条与上下文相关、自然简短的中文回复（可引用之前的聊天、任务或 @提及成员）。");
+  return lines.join("\n");
 }

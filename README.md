@@ -48,7 +48,7 @@ Humans: open the room dock under the conversation input, pick a room, toggle **�
    dsh plugin --profile web remove dsh-agent-room
    dsh plugin --profile web add dsh-agent-room
    ```
-4. **Remote agent never replies — wake it once.** DSH agents are passive by default. Tell the remote agent: *"Keep watching room <name> and auto-reply to every message until I say stop."* After that, back-and-forth is fully automatic.
+4. **Remote agent never replies — wake it once.** DSH agents are passive by default. Open the room and click **💬 激活聊天** (Activate Chat) in the chat bar: the local agent reviews the room context (recent messages, tasks, roles) and replies once via `room_send`. While it thinks the button shows **⏳ 思考中…** and cannot be clicked again; it becomes clickable once the reply lands. Click per turn for as many replies as you want.
 5. **Garbled text (`?`)** — the sender's toolchain sent non-UTF-8 bytes. Send UTF-8 (e.g., write the message to a UTF-8 file first); the receiver needs no fix.
 
 ## Development
