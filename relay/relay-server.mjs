@@ -14,6 +14,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 const port = Number(process.argv[2] ?? process.env.RELAY_PORT ?? 9320);
 
+/** 每房间离线暂存帧上限（内存 FIFO）：超限丢最旧，保证单房间内存有界。 */
+const OFFLINE_BUFFER_LIMIT = 200;
+
 function hmacHex(secret, message) {
   return createHmac("sha256", secret).update(message).digest("hex");
 }
@@ -37,7 +40,7 @@ function verifyTicket(secret, ticket) {
   return payload;
 }
 
-/** roomId -> { owner: ws|null, secret: string|null, members: Map<agentId, {socket, authenticated}> } */
+/** roomId -> { owner: ws|null, secret: string|null, members: Map<agentId, {socket, authenticated}>, buffer: Array<{from: string, frame: object}> } */
 const rooms = new Map();
 
 const wss = new WebSocketServer({ port });
@@ -65,7 +68,7 @@ wss.on("connection", (socket, req) => {
 
   let room = rooms.get(roomId);
   if (!room) {
-    room = { owner: null, secret: null, members: new Map() };
+    room = { owner: null, secret: null, members: new Map(), buffer: [] };
     rooms.set(roomId, room);
   }
 
@@ -84,6 +87,13 @@ wss.on("connection", (socket, req) => {
       try { room.owner.close(4001, "owner replaced"); } catch { /* ignore */ }
     }
     room.owner = socket;
+    // 房主重连成功：按 FIFO 补发离线期间暂存的业务帧，发完清空（尽力而为）。
+    if (room.buffer.length > 0) {
+      for (const item of room.buffer) {
+        socket.send(JSON.stringify({ type: "relay.frame", from: item.from, frame: item.frame }));
+      }
+      room.buffer = [];
+    }
   } else if (role === "member") {
     const prev = room.members.get(agentId);
     if (prev && prev.socket !== socket) {
@@ -136,10 +146,14 @@ wss.on("connection", (socket, req) => {
         return; // 未认证成员只能 join/auth
       }
 
-      // 已认证成员 → 转发给房主
+      // 已认证成员 → 转发给房主；房主离线则暂存，待房主重连后按序补发。
       const owner = room.owner;
       if (owner && owner.readyState === WebSocket.OPEN) {
         owner.send(JSON.stringify({ type: "relay.frame", from: agentId, frame }));
+      } else {
+        // 尽力而为内存 FIFO：超限丢最旧；relay.join/relay.auth 走未认证分支，不会进入此缓存。
+        room.buffer.push({ from: agentId, frame });
+        if (room.buffer.length > OFFLINE_BUFFER_LIMIT) room.buffer.shift();
       }
       return;
     }
