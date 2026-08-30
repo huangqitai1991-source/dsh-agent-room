@@ -18,10 +18,12 @@ export interface RoomListProps {
   createTitle: string;
   createType: "persistent" | "temporary";
   joinAddr: string;
+  joinPassword: string;
   relayHint: boolean;
   onCreateTitle(v: string): void;
   onCreateType(v: "persistent" | "temporary"): void;
   onJoinAddr(v: string): void;
+  onJoinPassword(v: string): void;
   onToggleCreate(): void;
   onToggleJoin(): void;
   onCreate(): void;
@@ -35,8 +37,8 @@ export interface RoomListProps {
 
 export function RoomList(props: RoomListProps): React.ReactElement {
   const {
-    rooms, discovered, activeRoomId, unread, creating, joining, createTitle, createType, joinAddr,
-    onCreateTitle, onCreateType, onJoinAddr, onToggleCreate, onToggleJoin, onCreate, onJoin,
+    rooms, discovered, activeRoomId, unread, creating, joining, createTitle, createType, joinAddr, joinPassword,
+    onCreateTitle, onCreateType, onJoinAddr, onJoinPassword, onToggleCreate, onToggleJoin, onCreate, onJoin,
     onJoinDiscovered, onSelect, onCopy, leaveConfirm, onArmLeave, relayHint,
   } = props;
 
@@ -87,10 +89,21 @@ export function RoomList(props: RoomListProps): React.ReactElement {
             />
             <Btn variant="primary" onClick={onJoin} disabled={!joinAddr.trim()}>加入</Btn>
           </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <input
+              className="ar-input"
+              type="password"
+              style={{ flex: 1, padding: "7px 10px", fontSize: 13 }}
+              placeholder="密码（密码房间必填，公开房间可留空）"
+              value={joinPassword}
+              onChange={(e) => onJoinPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && onJoin()}
+            />
+          </div>
           <div style={{ fontSize: 11, color: THEME.faint, marginTop: 6, lineHeight: 1.5 }}>
             {relayHint
-              ? "支持 host:port 或 relay://…；直连不可达时自动走中继（跨网）"
-              : "支持 host:port（同网段直连）或 relay://…（跨网中继）"}
+              ? "直连不可达 → 自动走中继（已配置）· 密码房间需填写密码"
+              : "host:port 直连（同网段）或 relay://…（跨网中继）· 密码房间需填写密码"}
           </div>
         </div>
       )}

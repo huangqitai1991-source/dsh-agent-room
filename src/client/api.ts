@@ -97,6 +97,37 @@ export interface RoomState {
 
 /* ----------------------------- api helpers ----------------------------- */
 
+/**
+ * Map raw server error strings to specific, user-facing messages (D9 UX):
+ * join rejections carry protocol codes ("join rejected: wrong-password") or
+ * the owner's Chinese message; relay path errors are Chinese already. Fall
+ * back to the original text when nothing matches.
+ */
+const JOIN_ERROR_ZH: Array<[RegExp, string]> = [
+  [/wrong-password|密码错误/, "加入失败：密码错误（密码房间需要填写正确密码）"],
+  [/revoked|吊销入场资格/, "加入失败：你已被吊销入场资格"],
+  [/room-full|房间人数已满/, "加入失败：房间人数已满"],
+  [/room-closed|房间未开放/, "加入失败：房间未开放"],
+  [/room-not-found|房间不存在|not-found/, "加入失败：找不到该房间（检查地址或房间号）"],
+  [/already-member/, "已在该房间中"],
+  [/中继加入超时/, "加入失败：中继连接超时（检查中继地址是否可达，稍后重试）"],
+  [/relay auth rejected/, "加入失败：中继认证未通过（可能已被吊销或凭证过期）"],
+  [/中继连接中断/, "加入失败：中继连接中断"],
+  [/连接超时/, "加入失败：直连超时（目标地址不可达，将自动尝试中继）"],
+  [/没有可用的连接地址/, "加入失败：没有可用的连接地址"],
+];
+
+export function friendlyError(message: string): string {
+  if (!message) return "操作失败";
+  for (const [re, zh] of JOIN_ERROR_ZH) {
+    if (re.test(message)) return zh;
+  }
+  if (message.startsWith("join rejected")) {
+    return "加入失败：" + message.replace(/^join rejected:\s*/, "");
+  }
+  return message;
+}
+
 export async function api<T = unknown>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, {
     method: body === undefined ? "GET" : "POST",
@@ -104,7 +135,7 @@ export async function api<T = unknown>(path: string, body?: unknown): Promise<T>
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const json = (await response.json()) as { ok: boolean; data?: T; error?: string };
-  if (!json.ok || !response.ok) throw new Error(json.error ?? `HTTP ${response.status}`);
+  if (!json.ok || !response.ok) throw new Error(friendlyError(json.error ?? `HTTP ${response.status}`));
   return json.data as T;
 }
 
