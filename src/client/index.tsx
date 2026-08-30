@@ -34,6 +34,8 @@ function RoomDock(): React.ReactElement {
   const [takeover, setTakeover] = React.useState(false);
   /** Optimistic activate-thinking flags per room (server state is the source of truth). */
   const [thinkingRooms, setThinkingRooms] = React.useState<Record<string, boolean>>({});
+  /** Persistent activate-chat error (survives state polls; cleared on next activate or dismiss). */
+  const [activateError, setActivateError] = React.useState<string | null>(null);
   const [text, setText] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [open, setOpen] = React.useState(false);
@@ -297,6 +299,14 @@ function RoomDock(): React.ReactElement {
     const unsub = subscribeEvents((event) => {
       if (event.kind === "chat" && typeof event.roomId === "string" && event.message) {
         handlePushMessage(event.roomId, event.message as ApiMessage);
+      }
+      if (event.kind === "activate-error" && typeof event.roomId === "string" && typeof event.message === "string") {
+        setActivateError(event.message);
+        setThinkingRooms((prev) => {
+          const next = { ...prev };
+          delete next[event.roomId as string];
+          return next;
+        });
       }
       debouncedRefresh();
     });
@@ -645,10 +655,13 @@ function RoomDock(): React.ReactElement {
       .catch(() => {});
   };
   /** 激活聊天: one-shot — button flips to 思考中 immediately, server state
-   *  (poll + SSE) restores it once our own reply lands. */
+   *  (poll + SSE) restores it once our own reply lands. On a backend error the
+   *  button is restored AND a persistent error message is shown (not a silent
+   *  bounce-back). */
   const activateChat = () => {
     if (!activeRoom) return;
     const roomId = activeRoom.roomId;
+    setActivateError(null);
     setThinkingRooms((prev) => ({ ...prev, [roomId]: true }));
     void activateChatApi(roomId)
       .then(() => refreshState())
@@ -658,7 +671,7 @@ function RoomDock(): React.ReactElement {
           delete next[roomId];
           return next;
         });
-        setError(friendlyError(err.message));
+        setActivateError(friendlyError(err.message));
       });
   };
 
@@ -876,6 +889,8 @@ function RoomDock(): React.ReactElement {
                     onSendHuman={() => sendChat(true)}
                     onToggleTakeover={() => setTakeover((v) => !v)}
                     onActivateChat={activateChat}
+                    activateError={activateError}
+                    onClearActivateError={() => setActivateError(null)}
                     onLoadOlder={loadOlder}
                     onSearchChange={setChatSearch}
                   />

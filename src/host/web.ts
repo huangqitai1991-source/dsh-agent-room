@@ -136,10 +136,18 @@ export function createRouter(service: AgentRoomService): Handler {
       if (method === "POST" && activateChatMatch) {
         const roomId = decodeURIComponent(activateChatMatch[1]!);
         if (service.isActivateThinking(roomId)) {
+          console.error("[agent-room] activate-chat: 409 for " + roomId + " — already thinking");
           return sendJson(response, 409, { ok: false, error: "该房间正在思考中，请等待回复完成" });
         }
-        service.activateChat(roomId);
-        return sendJson(response, 200, { ok: true, data: { thinking: true } });
+        try {
+          const result = service.activateChat(roomId);
+          console.error("[agent-room] activate-chat: accepted for " + roomId + " (agent=" + (result?.agentId ?? "unknown") + ") — thinking=true");
+          return sendJson(response, 200, { ok: true, data: { thinking: true } });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error("[agent-room] activate-chat: rejected for " + roomId + " — " + message);
+          return sendJson(response, 500, { ok: false, error: message });
+        }
       }
 
       const activateStateMatch = /^\/agent-room-api\/rooms\/([^/]+)\/activate-state$/.exec(path);
