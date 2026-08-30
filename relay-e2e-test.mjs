@@ -73,6 +73,27 @@ const done = await waitFor(() => client.snapshot?.room.tasks.find((t) => t.taskI
 check("task closed loop via relay (done)", Boolean(done));
 check("owner sees task done", service.getOwnedRoom(room.roomId)?.tasks.find((t) => t.taskId === taskId)?.status === "done");
 
+// 4b. offline buffering + replay: member frames queue while the owner relay
+//     bridge is down, then replay in order exactly once on reconnect (member
+//     seq dedup guards against duplicates).
+const delivered = [];
+const onBufferedChat = (m) => { if (m.text === "buffered-msg") delivered.push(m.seq); };
+client.on("chat", onBufferedChat);
+
+ownerServer.disconnectRelay(room.roomId);
+await new Promise((r) => setTimeout(r, 500)); // let the relay observe the owner close
+client.sendChat({ text: "buffered-msg" });
+await new Promise((r) => setTimeout(r, 500)); // let the relay buffer the frame
+
+ownerServer.connectRelay(room.roomId);
+await waitFor(() => delivered.length > 0);
+await new Promise((r) => setTimeout(r, 300)); // give any duplicate a chance to arrive
+
+check("offline buffered message delivered exactly once", delivered.length === 1);
+const bufferedInSnapshot = (client.snapshot?.recentMessages ?? []).filter((m) => m.text === "buffered-msg");
+check("buffered message appears once in snapshot (seq dedup)", bufferedInSnapshot.length === 1);
+client.off("chat", onBufferedChat);
+
 // 5. token auth negatives
 const badMember = new WebSocket(`${RELAY}/relay?roomId=${room.roomId}&role=member&agentId=evil`);
 const memberRejected = await new Promise((resolve) => {
