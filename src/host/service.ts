@@ -85,6 +85,11 @@ interface AgentRegistryLike {
 }
 
 export class AgentRoomService extends Service {
+  /** Cordis service dependencies: the DSH agent registry (ctx.agents) used by
+   *  activate-chat / resident-agent resolution. Without this declaration,
+   *  accessing ctx.agents throws "cannot get property \"agents\" without inject". */
+  static inject = ["agents"];
+
   readonly roomService: RoomService;
   readonly config: Required<Omit<AgentRoomConfig, "dataDir" | "relay">> & { dataDir: string; relay?: string };
 
