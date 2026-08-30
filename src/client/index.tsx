@@ -11,7 +11,7 @@
 
 import * as React from "react";
 import {
-  api, messagesApi, relayConfigApi, stateApi, subscribeEvents,
+  api, friendlyError, messagesApi, relayConfigApi, stateApi, subscribeEvents,
   type ApiMessage, type ApiRoom, type ApiTask, type RoomState,
 } from "./api";
 import { GLOBAL_CSS, THEME, bridgeLabel } from "./theme";
@@ -42,6 +42,8 @@ function RoomDock(): React.ReactElement {
   const [createType, setCreateType] = React.useState<"persistent" | "temporary">("persistent");
   const [joinAddr, setJoinAddr] = React.useState("");
   const [joinPassword, setJoinPassword] = React.useState("");
+  /** roomId hint carried from the LAN-discovered list into the join panel. */
+  const [joinRoomId, setJoinRoomId] = React.useState<string | null>(null);
   const [unread, setUnread] = React.useState<Record<string, number>>({});
   const [chatSearch, setChatSearch] = React.useState("");
   const [taskSearch, setTaskSearch] = React.useState("");
@@ -337,7 +339,7 @@ function RoomDock(): React.ReactElement {
       await api(path, body ?? {});
       setError(null);
     } catch (err) {
-      setError((err as Error).message);
+      setError(friendlyError((err as Error).message));
       throw err;
     }
   };
@@ -384,21 +386,35 @@ function RoomDock(): React.ReactElement {
       setError("请输入 host:port 或 relay:// 地址");
       return;
     }
-    void api<{ roomId: string }>("/agent-room-api/join", { address, password: joinPassword || undefined })
+    void api<{ roomId: string }>("/agent-room-api/join", {
+      address,
+      roomId: joinRoomId ?? undefined,
+      password: joinPassword || undefined,
+    })
       .then((d) => {
         setJoinAddr("");
         setJoinPassword("");
+        setJoinRoomId(null);
         setJoining(false);
         refreshState(d.roomId);
       })
-      .catch((err: Error) => setError(err.message));
+      .catch((err: Error) => setError(friendlyError(err.message)));
   };
 
   const joinDiscovered = (room: { roomId: string; title: string; authMode: string; addresses: string[] }) => {
-    const password = room.authMode === "password" ? (window.prompt(`房间「${room.title}」需要密码:`) ?? undefined) : undefined;
-    void api<{ roomId: string }>("/agent-room-api/join", { addresses: room.addresses, roomId: room.roomId, password })
+    if (room.authMode === "password") {
+      // 密码房间：打开加入面板并预填地址，由用户输入密码（不用 window.prompt）。
+      setJoinAddr(room.addresses[0] ?? "");
+      setJoinRoomId(room.roomId);
+      setJoinPassword("");
+      setJoining(true);
+      setCreating(false);
+      setError(null);
+      return;
+    }
+    void api<{ roomId: string }>("/agent-room-api/join", { addresses: room.addresses, roomId: room.roomId })
       .then((d) => refreshState(d.roomId))
-      .catch((err: Error) => setError(err.message));
+      .catch((err: Error) => setError(friendlyError(err.message)));
   };
 
   const sendChat = (human: boolean) => {
@@ -421,7 +437,9 @@ function RoomDock(): React.ReactElement {
       .then(() => messagesApi(roomId).then((d) => setMessages(d.messages)).catch(() => {}))
       .catch((err: Error) => {
         setMessages((prev) => prev.filter((m) => m.seq !== optimistic.seq));
-        setError(err.message);
+        setError(friendlyError(err.message));
+        // 发送失败时把原文放回输入框，方便重试（仅当输入框还是空的）。
+        setText((cur) => cur || content);
       });
   };
 
@@ -644,10 +662,12 @@ function RoomDock(): React.ReactElement {
     createTitle,
     createType,
     joinAddr,
+    joinPassword,
     relayHint: Boolean(state?.relay?.configured || state?.relay?.address),
     onCreateTitle: setCreateTitle,
     onCreateType: setCreateType,
     onJoinAddr: setJoinAddr,
+    onJoinPassword: setJoinPassword,
     onToggleCreate: () => { setCreating((v) => !v); setJoining(false); },
     onToggleJoin: () => { setJoining((v) => !v); setCreating(false); },
     onCreate: createRoom,
