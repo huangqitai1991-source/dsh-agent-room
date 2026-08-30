@@ -40,7 +40,6 @@ export interface RoomGateway {
   kickMember(roomId: string, agentId: string): Promise<void>;
   revokeMember(roomId: string, agentId: string, reason?: string): Promise<RevokedMember>;
   unrevokeMember(roomId: string, agentId: string): Promise<void>;
-  setAutoReply(roomId: string, on: boolean): void;
   sendChat(roomId: string, input: { text: string; replyTo?: number; mentions?: string[]; human?: boolean }): Promise<ChatMessage | null>;
   updateSettings(roomId: string, patch: Partial<RoomSettings> & { password?: string }): Promise<Room>;
   transferController(roomId: string, toAgentId: string): Promise<Room>;

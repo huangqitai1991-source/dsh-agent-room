@@ -72,7 +72,8 @@ export interface ApiRoom {
   members: ApiMember[];
   tasks: ApiTask[];
   revoked?: ApiRevoked[];
-  autoReply?: boolean;
+  /** True while the local agent is thinking for this room (activate-chat in flight). */
+  activateThinking?: boolean;
   latestSeq?: number;
   bridge?: ApiBridge;
 }
@@ -145,6 +146,14 @@ export const messagesApi = (roomId: string, before?: number) =>
   api<{ messages: ApiMessage[] }>(
     `/agent-room-api/rooms/${encodeURIComponent(roomId)}/messages${before !== undefined ? `?before=${before}` : ""}`,
   );
+
+/** 激活聊天: one-shot — the local agent replies once based on room context. */
+export const activateChatApi = (roomId: string) =>
+  api<{ thinking: boolean }>(`/agent-room-api/rooms/${encodeURIComponent(roomId)}/activate-chat`, {});
+
+/** Current activate-thinking state for a room. */
+export const activateStateApi = (roomId: string) =>
+  api<{ thinking: boolean }>(`/agent-room-api/rooms/${encodeURIComponent(roomId)}/activate-state`);
 
 export const relayConfigApi = {
   get: () => api<{ address?: string; configured: boolean }>("/agent-room-api/relay-config"),
