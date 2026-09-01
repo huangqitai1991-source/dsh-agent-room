@@ -11,7 +11,8 @@ export interface ChatProps {
   room: ApiRoom;
   messages: ApiMessage[];
   text: string;
-  takeOver: boolean;
+  /** True while the local agent LISTENS to this room (auto-wake on new messages). */
+  listening: boolean;
   /** True while the local agent is thinking for this room (activate-chat in flight). */
   thinking: boolean;
   search: string;
@@ -21,8 +22,7 @@ export interface ChatProps {
   onScroll?: () => void;
   onTextChange(v: string): void;
   onSend(): void;
-  onSendHuman(): void;
-  onToggleTakeover(): void;
+  onToggleListening(): void;
   onActivateChat(): void;
   /** Persistent activate-chat error to show above the send bar (backend 500 /
    *  async followup failure / timeout). Null hides the banner. */
@@ -48,7 +48,7 @@ function highlight(text: string, query: string): React.ReactNode {
 }
 
 export function Chat(props: ChatProps): React.ReactElement {
-  const { room, messages, text, takeOver, thinking, search, loadingOlder, hasOlder, scrollRef, activateError } = props;
+  const { room, messages, text, listening, thinking, search, loadingOlder, hasOlder, scrollRef, activateError } = props;
   const query = search.trim().toLowerCase();
   const filtered = query
     ? messages.filter((m) => m.text.toLowerCase().includes(query) || m.fromNickname.toLowerCase().includes(query))
@@ -128,9 +128,9 @@ export function Chat(props: ChatProps): React.ReactElement {
           className="ar-input"
           style={{ flex: 1, padding: "8px 10px", fontSize: 14 }}
           value={text}
-          placeholder={takeOver ? "以人类身份发言…（Enter 发送）" : "以本 agent 身份发言…（Enter 发送）"}
+          placeholder="以人类身份发言…（Enter 发送）"
           onChange={(e) => props.onTextChange(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && (takeOver ? props.onSendHuman() : props.onSend())}
+          onKeyDown={(e) => e.key === "Enter" && props.onSend()}
         />
         <Btn
           variant="primary"
@@ -140,10 +140,14 @@ export function Chat(props: ChatProps): React.ReactElement {
         >
           {thinking ? "⏳ 思考中…" : "💬 激活聊天"}
         </Btn>
-        <Btn variant="ghost" onClick={props.onToggleTakeover} title="接管本机 agent 席位">
-          {takeOver ? "释放接管" : "人类接管"}
+        <Btn
+          variant={listening ? "primary" : "ghost"}
+          onClick={props.onToggleListening}
+          title={listening ? "监听中：收到需要我的消息会自动响应（点击关闭）" : "开启监听：收到需要我的消息自动响应"}
+        >
+          {listening ? "👂 监听中" : "👂 监听"}
         </Btn>
-        <Btn variant="primary" onClick={takeOver ? props.onSendHuman : props.onSend} disabled={!text.trim()}>发送</Btn>
+        <Btn variant="primary" onClick={props.onSend} disabled={!text.trim()}>发送</Btn>
       </div>
     </div>
   );

@@ -74,6 +74,8 @@ export interface ApiRoom {
   revoked?: ApiRevoked[];
   /** True while the local agent is thinking for this room (activate-chat in flight). */
   activateThinking?: boolean;
+  /** True while the local agent is LISTENING to this room (auto-wake). */
+  listening?: boolean;
   latestSeq?: number;
   bridge?: ApiBridge;
 }
@@ -154,6 +156,10 @@ export const activateChatApi = (roomId: string) =>
 /** Current activate-thinking state for a room. */
 export const activateStateApi = (roomId: string) =>
   api<{ thinking: boolean }>(`/agent-room-api/rooms/${encodeURIComponent(roomId)}/activate-state`);
+
+/** 监听: turn the local agent's room listening (auto-wake) on/off. */
+export const listeningApi = (roomId: string, on: boolean) =>
+  api<{ ok: boolean }>(`/agent-room-api/rooms/${encodeURIComponent(roomId)}/listening`, { on });
 
 export const relayConfigApi = {
   get: () => api<{ address?: string; configured: boolean }>("/agent-room-api/relay-config"),

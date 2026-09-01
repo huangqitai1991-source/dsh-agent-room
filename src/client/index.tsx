@@ -11,7 +11,7 @@
 
 import * as React from "react";
 import {
-  activateChatApi, api, friendlyError, messagesApi, relayConfigApi, stateApi, subscribeEvents,
+  activateChatApi, api, friendlyError, listeningApi, messagesApi, relayConfigApi, stateApi, subscribeEvents,
   type ApiMessage, type ApiRoom, type ApiTask, type RoomState,
 } from "./api";
 import { GLOBAL_CSS, THEME, bridgeLabel } from "./theme";
@@ -31,7 +31,6 @@ function RoomDock(): React.ReactElement {
   const [messages, setMessages] = React.useState<ApiMessage[]>([]);
   const [hasOlder, setHasOlder] = React.useState(false);
   const [loadingOlder, setLoadingOlder] = React.useState(false);
-  const [takeover, setTakeover] = React.useState(false);
   /** Optimistic activate-thinking flags per room (server state is the source of truth). */
   const [thinkingRooms, setThinkingRooms] = React.useState<Record<string, boolean>>({});
   /** Persistent activate-chat error (survives state polls; cleared on next activate or dismiss). */
@@ -439,7 +438,8 @@ function RoomDock(): React.ReactElement {
       .catch((err: Error) => setError(friendlyError(err.message)));
   };
 
-  const sendChat = (human: boolean) => {
+  /** Web chat always speaks as the human at the browser — no takeover toggle. */
+  const sendChat = () => {
     if (!activeRoom || !text.trim()) return;
     const roomId = activeRoom.roomId;
     const content = text.trim();
@@ -450,12 +450,12 @@ function RoomDock(): React.ReactElement {
       fromNickname: identity?.nickname ?? "我",
       ts: new Date().toISOString(),
       text: content,
-      human,
+      human: true,
     };
     setText("");
     setMessages((prev) => [...prev, optimistic]);
     justSentRef.current = true;
-    void api(`/agent-room-api/rooms/${encodeURIComponent(roomId)}/chat`, { text: content, human })
+    void api(`/agent-room-api/rooms/${encodeURIComponent(roomId)}/chat`, { text: content, human: true })
       .then(() => messagesApi(roomId).then((d) => setMessages(d.messages)).catch(() => {}))
       .catch((err: Error) => {
         setMessages((prev) => prev.filter((m) => m.seq !== optimistic.seq));
@@ -463,6 +463,13 @@ function RoomDock(): React.ReactElement {
         // 发送失败时把原文放回输入框，方便重试（仅当输入框还是空的）。
         setText((cur) => cur || content);
       });
+  };
+
+  /** Toggle the local agent's room listening (auto-wake on relevant messages). */
+  const toggleListening = (roomId: string, on: boolean) => {
+    void listeningApi(roomId, on)
+      .then(() => refreshState())
+      .catch((err: Error) => setError(friendlyError(err.message)));
   };
 
   /** Optimistic task mutation + POST; on failure the next state poll restores truth. */
@@ -806,11 +813,6 @@ function RoomDock(): React.ReactElement {
             <button onClick={() => setError(null)} style={{ background: "none", border: "none", color: THEME.red, cursor: "pointer", fontSize: 14 }}>✕</button>
           </div>
         )}
-        {takeover && (
-          <div style={{ padding: "5px 14px", background: THEME.amberSoft, color: "#ffd27d", fontSize: 12, borderBottom: "1px solid rgba(251,191,36,.35)", flexShrink: 0 }}>
-            👤 人类接管模式：你的消息将以人类身份发送
-          </div>
-        )}
 
         <div style={{ overflowY: "auto", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <RoomList {...roomListProps} />
@@ -877,7 +879,7 @@ function RoomDock(): React.ReactElement {
                     room={activeRoom}
                     messages={messages}
                     text={text}
-                    takeOver={takeover}
+                    listening={Boolean(activeRoom.listening)}
                     thinking={roomThinking(activeRoom.roomId)}
                     search={chatSearch}
                     loadingOlder={loadingOlder}
@@ -885,9 +887,8 @@ function RoomDock(): React.ReactElement {
                     scrollRef={chatScrollRef}
                     onScroll={onChatScroll}
                     onTextChange={setText}
-                    onSend={() => sendChat(false)}
-                    onSendHuman={() => sendChat(true)}
-                    onToggleTakeover={() => setTakeover((v) => !v)}
+                    onSend={sendChat}
+                    onToggleListening={() => toggleListening(activeRoom.roomId, !activeRoom.listening)}
                     onActivateChat={activateChat}
                     activateError={activateError}
                     onClearActivateError={() => setActivateError(null)}
@@ -933,7 +934,6 @@ function RoomDock(): React.ReactElement {
                   <Members
                     room={activeRoom}
                     localAgentId={localAgentId}
-                    takeOver={takeover}
                     capsInput={capsInput}
                     leaveConfirm={confirmLeaveRoom}
                     confirmKick={confirmKickAgent}
@@ -941,7 +941,6 @@ function RoomDock(): React.ReactElement {
                     confirmUnrevoke={confirmUnrevokeAgent}
                     onCapsInput={setCapsInput}
                     onSaveCaps={saveMyCaps}
-                    onToggleTakeover={() => setTakeover((v) => !v)}
                     onAssignRole={assignRole}
                     onSetMyRole={setMyRole}
                     onArmKick={armKick}

@@ -11,7 +11,6 @@ import { Btn, Pill, Row, SectionTitle, StatusDot } from "./common";
 export interface MembersProps {
   room: ApiRoom;
   localAgentId: string;
-  takeOver: boolean;
   capsInput: string;
   leaveConfirm: string | null;
   confirmKick: string | null;
@@ -19,7 +18,6 @@ export interface MembersProps {
   confirmUnrevoke: string | null;
   onCapsInput(v: string): void;
   onSaveCaps(): void;
-  onToggleTakeover(): void;
   onAssignRole(member: ApiMember, role: string): void;
   onSetMyRole(role: string): void;
   onArmKick(agentId: string): void;
@@ -33,7 +31,7 @@ export interface MembersProps {
 }
 
 export function Members(props: MembersProps): React.ReactElement {
-  const { room, localAgentId, takeOver, capsInput } = props;
+  const { room, localAgentId, capsInput } = props;
   const bridge = bridgeLabel(room.bridge);
   const me = room.members.find((m) => m.agentId === localAgentId);
 
@@ -111,7 +109,7 @@ export function Members(props: MembersProps): React.ReactElement {
               </>
             )}
             {isMe && room.allowHumanTakeover && (
-              <Btn variant={takeOver ? "primary" : "ghost"} onClick={props.onToggleTakeover}>{takeOver ? "释放接管" : "接管"}</Btn>
+              <span style={{ fontSize: 11, color: THEME.faint }}>👤 网页发言即人类身份</span>
             )}
           </div>
         );

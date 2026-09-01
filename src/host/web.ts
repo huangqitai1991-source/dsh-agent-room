@@ -155,6 +155,15 @@ export function createRouter(service: AgentRoomService): Handler {
         return sendJson(response, 200, { ok: true, data: { thinking: service.isActivateThinking(decodeURIComponent(activateStateMatch[1]!)) } });
       }
 
+      // 监听 (listening): the local agent watches the room and wakes itself
+      // when a message needs it (rule layer + prompt; see sweepListening).
+      const listeningMatch = /^\/agent-room-api\/rooms\/([^/]+)\/listening$/.exec(path);
+      if (method === "POST" && listeningMatch) {
+        const body = (await readJson(request)) as { on?: boolean };
+        service.setListening(decodeURIComponent(listeningMatch[1]!), body.on === true);
+        return sendJson(response, 200, { ok: true });
+      }
+
       const chatMatch = /^\/agent-room-api\/rooms\/([^/]+)\/chat$/.exec(path);
       if (method === "POST" && chatMatch) {
         const body = (await readJson(request)) as { text?: string; mentions?: string[]; human?: boolean };
