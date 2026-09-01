@@ -346,10 +346,9 @@ export class AgentRoomService extends Service {
   setListening(roomId: string, on: boolean): void {
     if (on) {
       this.listeningRooms.add(roomId);
-      // Start from the current tail so old history does not re-trigger.
-      void this.recentMessagesFor(roomId, 1).then((recent) => {
-        if (recent.length > 0) this.listenSeen.set(roomId, recent[recent.length - 1]!.seq);
-      });
+      // Reset the cursor; the sweep initializes it from the current tail on its
+      // first pass, so old history never re-triggers a wake.
+      this.listenSeen.delete(roomId);
       void this.sweepListening();
     } else {
       this.listeningRooms.delete(roomId);
@@ -375,9 +374,15 @@ export class AgentRoomService extends Service {
       try {
         const recent = await this.recentMessagesFor(roomId, 20);
         if (recent.length === 0) continue;
-        const seen = this.listenSeen.get(roomId) ?? 0;
-        const fresh = recent.filter((m) => m.seq > seen);
         const lastSeq = recent[recent.length - 1]!.seq;
+        const seen = this.listenSeen.get(roomId);
+        if (seen === undefined) {
+          // First sweep for this room: start from the current tail and process
+          // nothing — history must never re-trigger a wake.
+          this.listenSeen.set(roomId, lastSeq);
+          continue;
+        }
+        const fresh = recent.filter((m) => m.seq > seen);
         this.listenSeen.set(roomId, lastSeq);
         if (fresh.length === 0) continue;
         const target = this.pickListenTarget(fresh, identity);
