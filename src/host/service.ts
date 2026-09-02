@@ -36,6 +36,10 @@ export interface AgentRoomConfig {
   /** Cross-network relay address, e.g. "ws://1.2.3.4:9320". Owners bridge their
    *  rooms to it; members fall back to it when the owner is not reachable. */
   relay?: string;
+  /** Explicit DSH session id that handles room replies (activate-chat /
+   *  listening wake). When unset, the plugin auto-selects and remembers the
+   *  choice so followups do not land on random sessions after restarts. */
+  replyAgentId?: string;
 }
 
 /** Push event delivered to the browser UI (SSE); also used by the polling
@@ -49,7 +53,7 @@ export type BrowserEvent =
   | { kind: "state" }
   | { kind: "activate-error"; roomId: string; message: string };
 
-export function resolveConfig(config: AgentRoomConfig = {}): Required<Pick<AgentRoomConfig, "port" | "tools" | "skills">> & { dataDir: string; relay?: string } {
+export function resolveConfig(config: AgentRoomConfig = {}): Required<Pick<AgentRoomConfig, "port" | "tools" | "skills">> & { dataDir: string; relay?: string; replyAgentId?: string } {
   const dshHome = process.env.DSH_HOME ?? join(homedir(), ".dsh");
   return {
     port: config.port ?? DEFAULT_PORT,
@@ -57,6 +61,7 @@ export function resolveConfig(config: AgentRoomConfig = {}): Required<Pick<Agent
     tools: config.tools ?? true,
     skills: config.skills ?? true,
     relay: config.relay ?? process.env.AGENT_ROOM_RELAY,
+    replyAgentId: config.replyAgentId ?? process.env.AGENT_ROOM_REPLY_AGENT,
   };
 }
 
@@ -91,7 +96,7 @@ export class AgentRoomService extends Service {
   static inject = ["agents"];
 
   readonly roomService: RoomService;
-  readonly config: Required<Omit<AgentRoomConfig, "dataDir" | "relay">> & { dataDir: string; relay?: string };
+  readonly config: Required<Omit<AgentRoomConfig, "dataDir" | "relay" | "replyAgentId">> & { dataDir: string; relay?: string; replyAgentId?: string };
 
   private peerServer: PeerServer | null = null;
   private peerStarting: Promise<string> | null = null;
@@ -109,6 +114,9 @@ export class AgentRoomService extends Service {
   /** Rooms with a listening wake currently in flight (skip until it settles). */
   private readonly listenPending = new Set<string>();
   private listenTimer: NodeJS.Timeout | null = null;
+  /** Persisted stable choice of the reply agent (dataDir/reply-agent.json). */
+  private replyAgentFile = "";
+  private persistedReplyAgentId: string | undefined;
   /** Per joined room: live channel info (state, relay path, address). */
   private readonly connInfo = new Map<string, { state: string; viaRelay: boolean; address: string }>();
   /** Relay bridge status for owned rooms: roomId -> relayStatus(). */
@@ -224,34 +232,69 @@ export class AgentRoomService extends Service {
    * 4. agents.list()[0] / agents.roots()[0] — first live / top-level agent.
    */
   private resolveResidentAgent(identity: AgentIdentity): AgentLike | undefined {
-    const attempts: Array<[string, () => AgentLike | undefined]> = [
-      ["ctx.agent", () => (this.ctx as unknown as { agent?: AgentLike }).agent],
-      ["agents.currentInitiator()", () => {
-        const agents = this.agentsRegistry();
-        return typeof agents?.currentInitiator === "function" ? agents.currentInitiator() : undefined;
-      }],
-      ["agents.get(identity.agentId)", () => this.agentsRegistry()?.get?.(identity.agentId)],
-      ["agents.list()[0]", () => this.agentsRegistry()?.list?.()[0]],
-      ["agents.roots()[0]", () => this.agentsRegistry()?.roots?.()[0]],
-    ];
-    for (const [label, pick] of attempts) {
-      try {
-        const agent = pick();
-        if (agent && typeof agent.followup === "function") {
-          this.diag("activate-chat: resident agent found via " + label + " (id=" + (agent.id ?? agent.sessionId ?? "unknown") + ")");
-          return agent;
-        }
-      } catch (error) {
-        this.diag("activate-chat: agent lookup " + label + " threw: " + String(error));
-      }
-    }
     const agents = this.agentsRegistry();
-    let listCount = -1;
-    let rootsCount = -1;
-    try { listCount = agents?.list?.().length ?? -1; } catch { /* ignore */ }
-    try { rootsCount = agents?.roots?.().length ?? -1; } catch { /* ignore */ }
-    this.diag("activate-chat: NO resident agent (registry=" + (agents ? "present" : "absent") + ", agents.list()=" + listCount + ", agents.roots()=" + rootsCount + ")");
+    const usable = (a: AgentLike | undefined): AgentLike | undefined =>
+      a && typeof a.followup === "function" ? a : undefined;
+
+    // 1. explicit override (config / AGENT_ROOM_REPLY_AGENT)
+    if (this.config.replyAgentId) {
+      try {
+        const a = usable(agents?.get?.(this.config.replyAgentId));
+        if (a) return a;
+      } catch { /* ignore */ }
+    }
+    // 2. persisted stable choice (dataDir/reply-agent.json) — survives restarts
+    if (this.persistedReplyAgentId) {
+      try {
+        const a = usable(agents?.get?.(this.persistedReplyAgentId));
+        if (a) {
+          this.diag("activate-chat: resident agent via persisted choice (id=" + (a.id ?? a.sessionId ?? "unknown") + ")");
+          return a;
+        }
+      } catch { /* ignore */ }
+    }
+    // 3. room identity matching a live session
+    try {
+      const a = usable(agents?.get?.(identity.agentId));
+      if (a) {
+        this.diag("activate-chat: resident agent via room identity (id=" + (a.id ?? a.sessionId ?? "unknown") + ")");
+        this.saveReplyAgentId(a);
+        return a;
+      }
+    } catch { /* ignore */ }
+    // 4. heuristic: session-* ids first, kanban task agents excluded
+    let all: AgentLike[] = [];
+    try { all = agents?.list?.() ?? []; } catch { /* ignore */ }
+    const candidates = all.filter((a) => typeof a.followup === "function" && !(a.id ?? a.sessionId ?? "").includes("herness-kanban-task-"));
+    const preferred = candidates.filter((a) => (a.id ?? a.sessionId ?? "").startsWith("session-"));
+    const pick = (preferred.length > 0 ? preferred : candidates)[0];
+    if (pick) {
+      this.diag("activate-chat: resident agent via heuristic " + (preferred.length > 0 ? "session-*" : "fallback") + " (id=" + (pick.id ?? pick.sessionId ?? "unknown") + ")");
+      this.saveReplyAgentId(pick);
+      return pick;
+    }
+    this.diag("activate-chat: NO resident agent (registry=" + (agents ? "present" : "absent") + ", agents.list()=" + all.length + ")");
     return undefined;
+  }
+
+  /* ----------------------- reply-agent persistence ---------------------- */
+
+  private async loadReplyAgentId(): Promise<string | undefined> {
+    if (!this.replyAgentFile) return undefined;
+    try {
+      const raw = await readFile(this.replyAgentFile, "utf8");
+      const parsed = JSON.parse(raw) as { replyAgentId?: string };
+      return typeof parsed.replyAgentId === "string" && parsed.replyAgentId ? parsed.replyAgentId : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private saveReplyAgentId(agent: AgentLike): void {
+    const id = agent.id ?? agent.sessionId;
+    if (!id || !this.replyAgentFile) return;
+    this.persistedReplyAgentId = id;
+    void writeFile(this.replyAgentFile, JSON.stringify({ replyAgentId: id }, null, 2), "utf8").catch(() => { /* non-fatal */ });
   }
 
   /** Build the context prompt and drive the resident agent. Thinking is kept
@@ -444,6 +487,8 @@ export class AgentRoomService extends Service {
   private async boot(): Promise<void> {
     this.relayConfigFile = join(this.config.dataDir, "relay-config.json");
     await this.loadRelayConfig();
+    this.replyAgentFile = join(this.config.dataDir, "reply-agent.json");
+    this.persistedReplyAgentId = await this.loadReplyAgentId();
     await this.roomService.boot();
     const identity = await this.roomService.ensureIdentity();
     // Auto-collect capabilities: map installed tools onto the 6-family taxonomy
