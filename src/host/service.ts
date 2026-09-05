@@ -23,6 +23,7 @@ import type { RoomBeacon } from "./protocol.js";
 import { nowIso } from "./util.js";
 import { capabilityForTool } from "./catalog.js";
 import type { RoomGateway, TaskInput } from "../tools/gateway.js";
+import * as toolsPlugin from "../tools/index.js";
 
 export interface AgentRoomConfig {
   /** LAN port for the room server. */
@@ -87,6 +88,14 @@ interface AgentRegistryLike {
   roots?(): AgentLike[];
   get?(id: string): AgentLike | undefined;
   currentInitiator?(): AgentLike | undefined;
+  /** Spawn a dedicated agent session (used by the duty-agent bootstrap). */
+  create?(options: {
+    sessionId: string;
+    meta?: Record<string, unknown>;
+    agentOptions?: Record<string, unknown>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setup?: (agentCtx: any) => Promise<void> | void;
+  }): Promise<{ agent?: AgentLike } | undefined>;
 }
 
 export class AgentRoomService extends Service {
@@ -117,6 +126,9 @@ export class AgentRoomService extends Service {
   /** Persisted stable choice of the reply agent (dataDir/reply-agent.json). */
   private replyAgentFile = "";
   private persistedReplyAgentId: string | undefined;
+  /** Dedicated duty-agent session id (agent-room-duty-<nodeAgentId>); spawned on
+   *  demand so room replies never depend on "whichever session is first". */
+  private dutyAgentId: string | undefined;
   /** Per joined room: live channel info (state, relay path, address). */
   private readonly connInfo = new Map<string, { state: string; viaRelay: boolean; address: string }>();
   /** Relay bridge status for owned rooms: roomId -> relayStatus(). */
@@ -183,13 +195,13 @@ export class AgentRoomService extends Service {
    * Throws when the room is already thinking (HTTP 409) or no resident agent
    * exists (HTTP 500).
    */
-  activateChat(roomId: string): { agentId?: string } {
+  async activateChat(roomId: string): Promise<{ agentId?: string }> {
     if (this.activateThinkingRooms.has(roomId)) {
       throw new Error("该房间正在思考中，请等待回复完成");
     }
     const identity = this.roomService.getIdentity();
     if (!identity) throw new Error("本机身份未就绪");
-    const agent = this.resolveResidentAgent(identity);
+    const agent = await this.resolveResidentAgent(identity);
     if (!agent) {
       this.diag("activate-chat: rejecting " + roomId + " — no resident agent found");
       throw new Error("未找到本机 agent，无法激活聊天（请确认 DSH agent 会话已就绪后重试）");
@@ -231,7 +243,7 @@ export class AgentRoomService extends Service {
    *    live session id;
    * 4. agents.list()[0] / agents.roots()[0] — first live / top-level agent.
    */
-  private resolveResidentAgent(identity: AgentIdentity): AgentLike | undefined {
+  private async resolveResidentAgent(identity: AgentIdentity): Promise<AgentLike | undefined> {
     const agents = this.agentsRegistry();
     const usable = (a: AgentLike | undefined): AgentLike | undefined =>
       a && typeof a.followup === "function" ? a : undefined;
@@ -243,6 +255,10 @@ export class AgentRoomService extends Service {
         if (a) return a;
       } catch { /* ignore */ }
     }
+    // 1b. dedicated duty-agent session (root-cause fix): stable, spawned on
+    // demand, independent of the boss's chat sessions.
+    const duty = await this.ensureDutyAgent();
+    if (duty) return duty;
     // 2. persisted stable choice (dataDir/reply-agent.json) — survives restarts
     if (this.persistedReplyAgentId) {
       try {
@@ -297,6 +313,91 @@ export class AgentRoomService extends Service {
     void writeFile(this.replyAgentFile, JSON.stringify({ replyAgentId: id }, null, 2), "utf8").catch(() => { /* non-fatal */ });
   }
 
+  /* --------------------------- duty agent (治本) ------------------------ */
+
+  /**
+   * Ensure a dedicated "值守" agent session exists and is usable. Its id is
+   * deterministic (agent-room-duty-<nodeAgentId>), so restarts re-attach to the
+   * SAME session instead of guessing. This makes activate-chat / listening wake
+   * independent of the boss's chat sessions — the true root-cause fix.
+   */
+  private async ensureDutyAgent(): Promise<AgentLike | undefined> {
+    const identity = this.roomService.getIdentity();
+    if (!identity) return undefined;
+    const dutyId = "agent-room-duty-" + identity.agentId;
+    const agents = this.agentsRegistry();
+
+    // Re-attach to an existing (restored) duty session first.
+    try {
+      const existing = agents?.get?.(dutyId);
+      if (existing && typeof existing.followup === "function") {
+        this.dutyAgentId = dutyId;
+        return existing;
+      }
+    } catch { /* ignore */ }
+
+    // Spawn it on demand.
+    if (typeof agents?.create !== "function") {
+      this.diag("duty agent: ctx.agents.create unavailable — falling back to heuristic");
+      return undefined;
+    }
+    try {
+      // Mirror the model config of an existing live session — spawned sessions
+      // without an explicit provider/model can stall on their first turn.
+      let provider: string | undefined;
+      let model: string | undefined;
+      try {
+        for (const a of agents?.list?.() ?? []) {
+          const opts = (a as unknown as { options?: { provider?: string; model?: string } }).options;
+          if (opts?.provider && opts?.model) {
+            provider = opts.provider;
+            model = opts.model;
+            break;
+          }
+        }
+      } catch { /* ignore */ }
+      const handle = await agents.create({
+        sessionId: dutyId,
+        meta: { cwd: process.cwd() },
+        agentOptions: {
+          ...(provider ? { provider } : {}),
+          ...(model ? { model } : {}),
+        },
+        setup(agentCtx) {
+          try {
+            agentCtx?.systemPrompt?.section?.({
+              name: "agent-room:duty",
+              order: 50,
+              text:
+                "你是 agent-room 的「值守」agent：保持空闲，只响应来自插件 followup 的指令。" +
+                "收到激活聊天/监听唤醒的指令时，按指令用 room_send 工具回复对应房间；" +
+                "指令说不需要回应时，不要调用任何工具。不要主动闲聊。",
+            });
+          } catch {
+            /* systemPrompt section is best-effort */
+          }
+          // Make the room tools (room_* / task_*) available inside this spawned
+          // session — spawned sessions do not inherit host-registered tools.
+          try {
+            agentCtx?.plugin?.(toolsPlugin);
+          } catch {
+            /* tool mounting is best-effort; room replies fall back to HTTP via pwsh */
+          }
+        },
+      });
+      const agent = handle?.agent;
+      if (agent && typeof agent.followup === "function") {
+        this.dutyAgentId = dutyId;
+        this.saveReplyAgentId(agent);
+        this.diag("duty agent: spawned " + dutyId);
+        return agent;
+      }
+    } catch (error) {
+      this.diag("duty agent: spawn failed — " + String(error));
+    }
+    return undefined;
+  }
+
   /** Build the context prompt and drive the resident agent. Thinking is kept
    *  until our own reply lands (noteOwnReply) or the flow fails explicitly. */
   private async runActivateChat(roomId: string, identity: AgentIdentity, agent: AgentLike): Promise<void> {
@@ -313,6 +414,7 @@ export class AgentRoomService extends Service {
       const member = room.members.find((m) => m.agentId === identity.agentId);
       const role = member?.roles?.length ? member.roles.join("、") : member?.role ?? "member";
       const prompt = buildActivatePrompt({
+        roomId,
         title: room.title,
         identity,
         role,
@@ -455,7 +557,7 @@ export class AgentRoomService extends Service {
    *  the cheap judge + executor in one call; a separate small-model judge is a
    *  v2 optimization). */
   private async runListenWake(roomId: string, identity: AgentIdentity, message: ChatMessage): Promise<void> {
-    const agent = this.resolveResidentAgent(identity);
+    const agent = await this.resolveResidentAgent(identity);
     if (!agent) {
       this.diag("listening: no resident agent for " + roomId);
       this.listenPending.delete(roomId);
@@ -468,6 +570,7 @@ export class AgentRoomService extends Service {
       if (!room) throw new Error(`房间不存在: ${roomId}`);
       const recent = await this.recentMessagesFor(roomId, 6);
       const prompt = buildListenPrompt({
+        roomId,
         title: room.title,
         identity,
         message,
@@ -901,6 +1004,7 @@ export class AgentRoomService extends Service {
  * (quoting prior chat / tasks / @mentions).
  */
 function buildActivatePrompt(input: {
+  roomId: string;
   title: string;
   identity: AgentIdentity;
   role: string;
@@ -908,7 +1012,7 @@ function buildActivatePrompt(input: {
   tasks: Task[];
 }): string {
   const lines: string[] = [];
-  lines.push(`你在房间「${input.title}」中被手动激活聊天，请基于房间上下文自然回复一条相关内容。`);
+  lines.push(`你在房间「${input.title}」（roomId: ${input.roomId}）中被手动激活聊天，请基于房间上下文自然回复一条相关内容。`);
   lines.push(`你的身份：${input.identity.nickname}（agentId: ${input.identity.agentId}，角色: ${input.role}，能力: ${input.identity.capabilities.join("、") || "无"}）。`);
   if (input.tasks.length > 0) {
     lines.push(`当前任务（${input.tasks.length} 个）：`);
@@ -931,6 +1035,7 @@ function buildActivatePrompt(input: {
     lines.push("房间还没有消息。");
   }
   lines.push("请用 room_send 工具向该房间发送一条与上下文相关、自然简短的中文回复（可引用之前的聊天、任务或 @提及成员）。");
+  lines.push(sendFallbackLine(input.roomId));
   return lines.join("\n");
 }
 
@@ -944,6 +1049,7 @@ function buildActivatePrompt(input: {
  * if the real token burn ever gets high.
  */
 function buildListenPrompt(input: {
+  roomId: string;
   title: string;
   identity: AgentIdentity;
   message: ChatMessage;
@@ -952,7 +1058,7 @@ function buildListenPrompt(input: {
   const m = input.message;
   const kind = m.human ? "人类发言（最高优先级）" : (m.mentions ?? []).includes(input.identity.agentId) ? "有人 @了你" : "疑似提问";
   const lines: string[] = [];
-  lines.push(`你在房间「${input.title}」的监听中收到一条需要关注的消息（${kind}）。`);
+  lines.push(`你在房间「${input.title}」（roomId: ${input.roomId}）的监听中收到一条需要关注的消息（${kind}）。`);
   lines.push(`消息：${m.fromNickname} 说：「${m.text.slice(0, 500)}」`);
   lines.push(`你的身份：${input.identity.nickname}（agentId: ${input.identity.agentId}）。`);
   const ctx = input.recent.slice(-6);
@@ -962,6 +1068,17 @@ function buildListenPrompt(input: {
   }
   lines.push("请判断这条消息是否需要你回应或处理：");
   lines.push("- 需要：用 room_send 工具自然、简短地回复；如果是要办事（比如统计、查数据、建任务），先回复认领再动手。");
+  lines.push(sendFallbackLine(input.roomId));
   lines.push("- 不需要（闲聊、已经解决、与你无关）：不要调用任何工具，保持沉默即可。");
   return lines.join("\n");
+}
+
+/** Fallback instruction when room_send is not available in the session:
+ *  reply through the local web API via pwsh (always present). */
+function sendFallbackLine(roomId: string): string {
+  return (
+    `如果没有 room_send 工具，改用 pwsh 执行 PowerShell 发送回复：` +
+    `Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:3080/agent-room-api/rooms/${roomId}/chat' ` +
+    `-ContentType 'application/json; charset=utf-8' -Body (@{ text = '你的回复'; human = $false } | ConvertTo-Json)。`
+  );
 }

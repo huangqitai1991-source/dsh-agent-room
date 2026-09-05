@@ -140,7 +140,7 @@ export function createRouter(service: AgentRoomService): Handler {
           return sendJson(response, 409, { ok: false, error: "该房间正在思考中，请等待回复完成" });
         }
         try {
-          const result = service.activateChat(roomId);
+          const result = await service.activateChat(roomId);
           console.error("[agent-room] activate-chat: accepted for " + roomId + " (agent=" + (result?.agentId ?? "unknown") + ") — thinking=true");
           return sendJson(response, 200, { ok: true, data: { thinking: true } });
         } catch (error) {
