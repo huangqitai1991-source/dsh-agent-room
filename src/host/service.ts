@@ -8,6 +8,7 @@
  */
 
 import { readFile, writeFile } from "node:fs/promises";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, hostname } from "node:os";
 import { Service } from "@deepseek-ai/cordis";
@@ -249,10 +250,45 @@ export class AgentRoomService extends Service {
       a && typeof a.followup === "function" ? a : undefined;
 
     // 1. explicit override (config / AGENT_ROOM_REPLY_AGENT)
-    if (this.config.replyAgentId) {
+    // Helper: agents.get() cannot find GUI sessions (session-*), so fall back
+    // to searching list()/roots() by id/sessionId.
+    const findById = (want: string): AgentLike | undefined => {
       try {
-        const a = usable(agents?.get?.(this.config.replyAgentId));
-        if (a) return a;
+        const direct = agents?.get?.(want);
+        if (direct) return direct;
+      } catch { /* ignore */ }
+      try {
+        return agents?.list?.()?.find((x) => (x.id ?? x.sessionId) === want);
+      } catch { /* ignore */ }
+      try {
+        return agents?.roots?.()?.find((x) => (x.id ?? x.sessionId) === want);
+      } catch { /* ignore */ }
+      return undefined;
+    };
+    if (this.config.replyAgentId) {
+      const a = usable(findById(this.config.replyAgentId));
+      if (a) {
+        this.diag("activate-chat: resident agent via config override (id=" + (a.id ?? a.sessionId ?? "unknown") + ")");
+        return a;
+      }
+    }
+    // 1a. auto-detect the boss's active session: the session whose transcript is
+    // most recently written under <DSH_HOME>/sessions/<workspace-of-cwd>.
+    // This follows the boss's conversation even when the session id rotates.
+    {
+      const activeId = this.detectActiveSessionId();
+      if (activeId) {
+        const a = usable(findById(activeId));
+        if (a) {
+          this.diag("activate-chat: resident agent via active-session detection (id=" + (a.id ?? a.sessionId ?? "unknown") + ")");
+          return a;
+        }
+      }
+      // Diagnostic: dump the registry + detection so we can see what's reachable.
+      try {
+        const listIds = agents?.list?.()?.map((x) => x.id ?? x.sessionId ?? "?") ?? [];
+        const rootIds = agents?.roots?.()?.map((x) => x.id ?? x.sessionId ?? "?") ?? [];
+        this.diag("activate-chat: registry dump — detected=" + (activeId ?? "none") + " list=[" + listIds.join(", ") + "] roots=[" + rootIds.join(", ") + "]");
       } catch { /* ignore */ }
     }
     // 1b. dedicated duty-agent session (root-cause fix): stable, spawned on
@@ -261,13 +297,11 @@ export class AgentRoomService extends Service {
     if (duty) return duty;
     // 2. persisted stable choice (dataDir/reply-agent.json) — survives restarts
     if (this.persistedReplyAgentId) {
-      try {
-        const a = usable(agents?.get?.(this.persistedReplyAgentId));
-        if (a) {
-          this.diag("activate-chat: resident agent via persisted choice (id=" + (a.id ?? a.sessionId ?? "unknown") + ")");
-          return a;
-        }
-      } catch { /* ignore */ }
+      const a = usable(findById(this.persistedReplyAgentId));
+      if (a) {
+        this.diag("activate-chat: resident agent via persisted choice (id=" + (a.id ?? a.sessionId ?? "unknown") + ")");
+        return a;
+      }
     }
     // 3. room identity matching a live session
     try {
@@ -311,6 +345,88 @@ export class AgentRoomService extends Service {
     if (!id || !this.replyAgentFile) return;
     this.persistedReplyAgentId = id;
     void writeFile(this.replyAgentFile, JSON.stringify({ replyAgentId: id }, null, 2), "utf8").catch(() => { /* non-fatal */ });
+  }
+
+  /**
+   * Find the boss's active conversation: the session under
+   * <DSH_HOME>/sessions/<workspace-of-cwd> whose transcript was most recently
+   * written. The session id rotates when the boss starts new chats, so pinning
+   * an id is fragile — following the freshest transcript is the robust signal.
+   */
+  private detectActiveSessionId(): string | undefined {
+    try {
+      const dshHome = process.env.DSH_HOME ?? join(homedir(), ".dsh");
+      const root = join(dshHome, "sessions");
+      // Workspace session dirs encode the path (verified against the on-disk
+      // layout): drive colon is DROPPED, backslash -> "-", and any char outside
+      // [A-Za-z0-9_.-] becomes "~" + 4-hex UTF-16 code unit.
+      //   "D:\dsh"            -> "--D-dsh--"
+      //   "D:\dsh\ITPM\数创港项目" -> "--D-dsh-ITPM-~6570~521B~6E2F~9879~76EE--"
+      const encode = (s: string) =>
+        s
+          .replace(/:/g, "")
+          .replace(/[\\/]/g, "-")
+          .replace(/[^\w.\-~]/g, (c) => "~" + c.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0"));
+      const wsName = "--" + encode(process.cwd()) + "--";
+      const dir = join(root, wsName);
+      const pickFreshest = (base: string): string | undefined => {
+        let best: string | undefined;
+        let bestTime = 0;
+        for (const entry of readdirSync(base, { withFileTypes: true })) {
+          if (!entry.isDirectory()) continue;
+          try {
+            const st = statSync(join(base, entry.name, "session.jsonl.zstd"));
+            if (st.mtimeMs > bestTime) {
+              bestTime = st.mtimeMs;
+              best = entry.name;
+            }
+          } catch {
+            /* session without a transcript yet — skip */
+          }
+        }
+        return best;
+      };
+      const detail = "cwd=" + process.cwd() + " ws=" + wsName + " dir=" + existsSync(dir);
+      // 1. primary: the workspace dir matching this process's cwd
+      if (existsSync(dir)) {
+        const best = pickFreshest(dir);
+        if (best) {
+          this.diag("active-session: " + best + " (" + detail + ")");
+          return best;
+        }
+      }
+      // 2. fallback: cwd can differ from the boss's workspace (e.g. the web was
+      // started from another directory). Scan EVERY workspace dir under
+      // <DSH_HOME>/sessions and pick the globally freshest session-* transcript.
+      // Prefix filter keeps out spawned helpers (agent-room-duty-*, kanban tasks).
+      let globalBest: string | undefined;
+      let globalTime = 0;
+      for (const ws of readdirSync(root, { withFileTypes: true })) {
+        if (!ws.isDirectory()) continue;
+        const base = join(root, ws.name);
+        for (const entry of readdirSync(base, { withFileTypes: true })) {
+          if (!entry.isDirectory() || !entry.name.startsWith("session-")) continue;
+          try {
+            const st = statSync(join(base, entry.name, "session.jsonl.zstd"));
+            if (st.mtimeMs > globalTime) {
+              globalTime = st.mtimeMs;
+              globalBest = entry.name;
+            }
+          } catch {
+            /* skip */
+          }
+        }
+      }
+      if (globalBest) {
+        this.diag("active-session: " + globalBest + " (global fallback, " + detail + ")");
+        return globalBest;
+      }
+      this.diag("active-session: none (" + detail + ")");
+      return undefined;
+    } catch (err) {
+      this.diag("active-session: error " + (err instanceof Error ? err.message : String(err)));
+      return undefined;
+    }
   }
 
   /* --------------------------- duty agent (治本) ------------------------ */
@@ -530,7 +646,7 @@ export class AgentRoomService extends Service {
         const fresh = recent.filter((m) => m.seq > seen);
         this.listenSeen.set(roomId, lastSeq);
         if (fresh.length === 0) continue;
-        const target = this.pickListenTarget(fresh, identity);
+        const target = this.pickListenTarget(fresh);
         if (!target) continue;
         this.listenPending.add(roomId);
         void this.runListenWake(roomId, identity, target);
@@ -541,13 +657,12 @@ export class AgentRoomService extends Service {
   }
 
   /** Rule layer: which of the fresh messages deserves a wake-up. */
-  private pickListenTarget(fresh: ChatMessage[], identity: AgentIdentity): ChatMessage | undefined {
+  /** Rule layer: only human speech (human:true, typed in the web "以人类身份
+   *  发言" input) wakes the agent — the remote-command channel. Agent messages
+   *  (including questions/@mentions) never trigger, keeping it quiet and cheap. */
+  private pickListenTarget(fresh: ChatMessage[]): ChatMessage | undefined {
     for (let i = fresh.length - 1; i >= 0; i--) {
-      const m = fresh[i]!;
-      if (m.from === identity.agentId) continue;
-      if (m.human) return m;
-      if ((m.mentions ?? []).includes(identity.agentId)) return m;
-      if (/[？?]|吗|呢|谁能|有没有|能不能|怎么办|帮/.test(m.text)) return m;
+      if (fresh[i]!.human) return fresh[i]!;
     }
     return undefined;
   }
@@ -1056,7 +1171,7 @@ function buildListenPrompt(input: {
   recent: ChatMessage[];
 }): string {
   const m = input.message;
-  const kind = m.human ? "人类发言（最高优先级）" : (m.mentions ?? []).includes(input.identity.agentId) ? "有人 @了你" : "疑似提问";
+  const kind = "人类发言（远程指挥，最高优先级）";
   const lines: string[] = [];
   lines.push(`你在房间「${input.title}」（roomId: ${input.roomId}）的监听中收到一条需要关注的消息（${kind}）。`);
   lines.push(`消息：${m.fromNickname} 说：「${m.text.slice(0, 500)}」`);
