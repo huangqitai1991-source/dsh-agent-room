@@ -19,9 +19,9 @@ export function Pill({ children, color, bg, style, title }: { children: React.Re
         lineHeight: 1,
         padding: "3px 7px",
         borderRadius: 999,
-        color: color ?? "#dfe6ff",
-        background: bg ?? "rgba(91,140,255,.16)",
-        border: `1px solid ${color ? color + "55" : "rgba(120,150,255,.3)"}`,
+        color: color ?? "#e7e0ff",
+        background: bg ?? "rgba(139,92,246,.18)",
+        border: `1px solid ${color ? color + "55" : "rgba(168,139,250,.34)"}`,
         whiteSpace: "nowrap",
         ...style,
       }}
@@ -85,10 +85,10 @@ export function Btn({ variant = "ghost", size = "sm", style, children, ...rest }
   const base: React.CSSProperties = { fontSize: size === "sm" ? 12 : 13, padding: size === "sm" ? "5px 10px" : "7px 14px" };
   switch (variant) {
     case "primary":
-      base.background = "linear-gradient(135deg, #5b8cff, #4a6fe0)";
+      base.background = "linear-gradient(135deg, #8b5cf6, #6d28d9)";
       base.color = "#fff";
-      base.border = "1px solid rgba(140,170,255,.5)";
-      base.boxShadow = "0 2px 10px rgba(91,140,255,.35)";
+      base.border = "1px solid rgba(192,132,252,.55)";
+      base.boxShadow = "0 2px 12px rgba(139,92,246,.4)";
       break;
     case "danger":
       base.background = "linear-gradient(135deg, #f87171, #dc2626)";
@@ -102,7 +102,7 @@ export function Btn({ variant = "ghost", size = "sm", style, children, ...rest }
       base.border = "1px solid rgba(52,211,153,.5)";
       break;
     default:
-      base.background = "rgba(120,150,255,.08)";
+      base.background = "rgba(168,139,250,.1)";
       base.color = THEME.text;
       base.border = `1px solid ${THEME.border}`;
   }

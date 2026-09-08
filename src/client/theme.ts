@@ -1,22 +1,24 @@
 /**
- * dsh-agent-room — unified deep-tech dark theme and shared visual vocabulary.
+ * dsh-agent-room — unified purple deep-tech dark theme and shared visual vocabulary.
  * All components import THEME instead of scattering magic colors.
  */
 
 export const THEME = {
-  // surfaces
-  bg: "rgba(10,13,20,.97)",
-  panel: "rgba(15,19,30,.92)",
-  card: "rgba(24,30,44,.78)",
-  cardHover: "rgba(30,38,56,.9)",
-  input: "rgba(8,11,18,.66)",
-  inputFocus: "rgba(8,11,18,.9)",
+  // surfaces (purple-tinted near-black)
+  bg: "rgba(10,8,20,.97)",
+  panel: "rgba(16,12,32,.94)",
+  panelGrad:
+    "linear-gradient(160deg, rgba(22,16,44,.96), rgba(11,8,22,.98)), radial-gradient(1200px 600px at 18% -12%, rgba(139,92,246,.28), transparent 60%), radial-gradient(900px 520px at 112% 8%, rgba(34,211,238,.14), transparent 55%), radial-gradient(700px 500px at 50% 118%, rgba(192,132,252,.18), transparent 60%)",
+  card: "rgba(26,20,46,.8)",
+  cardHover: "rgba(36,28,64,.9)",
+  input: "rgba(8,6,18,.7)",
+  inputFocus: "rgba(8,6,18,.92)",
   // lines
-  border: "rgba(120,150,255,.22)",
-  borderStrong: "rgba(120,150,255,.45)",
+  border: "rgba(168,139,250,.24)",
+  borderStrong: "rgba(168,139,250,.5)",
   // accents
-  accent: "#5b8cff",
-  accentSoft: "rgba(91,140,255,.16)",
+  accent: "#8b5cf6",
+  accentSoft: "rgba(139,92,246,.16)",
   cyan: "#22d3ee",
   cyanSoft: "rgba(34,211,238,.14)",
   green: "#34d399",
@@ -25,19 +27,19 @@ export const THEME = {
   amberSoft: "rgba(251,191,36,.14)",
   red: "#f87171",
   redSoft: "rgba(248,113,113,.14)",
-  purple: "#a78bfa",
-  purpleSoft: "rgba(167,139,250,.14)",
+  purple: "#c084fc",
+  purpleSoft: "rgba(192,132,252,.16)",
   // text
-  text: "#e9edf8",
-  dim: "rgba(233,237,248,.64)",
-  faint: "rgba(233,237,248,.42)",
+  text: "#ede9fe",
+  dim: "rgba(237,233,254,.64)",
+  faint: "rgba(237,233,254,.42)",
   // type
   font: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
   mono: '"SF Mono", "Cascadia Code", Consolas, "Liberation Mono", monospace',
   // geometry
   radius: 14,
   radiusSm: 9,
-  glow: "0 0 20px rgba(91,140,255,.4)",
+  glow: "0 0 22px rgba(139,92,246,.5)",
   glowGreen: "0 0 16px rgba(52,211,153,.4)",
   glowRed: "0 0 16px rgba(248,113,113,.4)",
 } as const;
@@ -46,15 +48,15 @@ export const THEME = {
 
 export function badgeColor(status: string): string {
   switch (status) {
-    case "todo": return "#8b93a7";
-    case "doing": return "#5b8cff";
+    case "todo": return "#9b93b4";
+    case "doing": return "#8b5cf6";
     case "review": return "#fbbf24";
     case "done": return "#34d399";
     case "rejected": return "#f87171";
     case "open": return "#34d399";
     case "suspended": return "#fbbf24";
-    case "closed": return "#8b93a7";
-    default: return "#8b93a7";
+    case "closed": return "#9b93b4";
+    default: return "#9b93b4";
   }
 }
 
@@ -122,24 +124,24 @@ export const ROLE_ZH: Record<string, string> = {
 export const ALL_ROLES = ["observer", "controller", "researcher", "executor", "reviewer"];
 
 export const ROLE_COLOR: Record<string, string> = {
-  observer: "#8b93a7",
-  controller: "#a78bfa",
+  observer: "#9b93b4",
+  controller: "#c084fc",
   researcher: "#22d3ee",
-  executor: "#5b8cff",
+  executor: "#8b5cf6",
   reviewer: "#fbbf24",
 };
 
-/** Global CSS injected once: animations, scrollbars, focus rings. */
+/** Global CSS injected once: animations, scrollbars, focus rings, aurora. */
 export const GLOBAL_CSS = `
   .ar-root * { box-sizing: border-box; }
   .ar-root { font-family: ${THEME.font}; }
   .ar-root ::-webkit-scrollbar { width: 8px; height: 8px; }
-  .ar-root ::-webkit-scrollbar-thumb { background: rgba(120,150,255,.28); border-radius: 8px; }
-  .ar-root ::-webkit-scrollbar-thumb:hover { background: rgba(120,150,255,.5); }
+  .ar-root ::-webkit-scrollbar-thumb { background: rgba(168,139,250,.3); border-radius: 8px; }
+  .ar-root ::-webkit-scrollbar-thumb:hover { background: rgba(168,139,250,.55); }
   .ar-root ::-webkit-scrollbar-track { background: transparent; }
   .ar-grad-border {
     position: relative;
-    background: linear-gradient(135deg, rgba(91,140,255,.55), rgba(34,211,238,.28) 45%, rgba(167,139,250,.4));
+    background: linear-gradient(135deg, rgba(139,92,246,.6), rgba(34,211,238,.3) 45%, rgba(192,132,252,.45));
     padding: 1px;
     border-radius: ${THEME.radius}px;
   }
@@ -162,7 +164,7 @@ export const GLOBAL_CSS = `
     transition: transform .12s ease, filter .12s ease, box-shadow .18s ease, background .15s ease, border-color .15s ease;
     white-space: nowrap;
   }
-  .ar-btn:hover { filter: brightness(1.15); transform: translateY(-1px); }
+  .ar-btn:hover { filter: brightness(1.18); transform: translateY(-1px); }
   .ar-btn:active { transform: scale(.95); }
   .ar-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
   .ar-input {
@@ -171,7 +173,7 @@ export const GLOBAL_CSS = `
     border-radius: ${THEME.radiusSm}px; outline: none;
     transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
   }
-  .ar-input:focus { border-color: ${THEME.accent}; box-shadow: 0 0 0 3px rgba(91,140,255,.18); background: ${THEME.inputFocus}; }
+  .ar-input:focus { border-color: ${THEME.accent}; box-shadow: 0 0 0 3px rgba(139,92,246,.22); background: ${THEME.inputFocus}; }
   .ar-input::placeholder { color: ${THEME.faint}; }
   .ar-dot { border-radius: 50%; display: inline-block; }
   .ar-dot-pulse { animation: ar-breathe 1.6s ease-in-out infinite; }
@@ -185,8 +187,25 @@ export const GLOBAL_CSS = `
     50% { box-shadow: 0 0 0 5px rgba(248,113,113,0); }
   }
   .ar-tabbtn { border: none; background: transparent; font-family: inherit; cursor: pointer; color: ${THEME.dim}; transition: color .15s ease, background .15s ease; border-radius: 8px 8px 0 0; }
-  .ar-tabbtn:hover { color: ${THEME.text}; background: rgba(91,140,255,.08); }
+  .ar-tabbtn:hover { color: ${THEME.text}; background: rgba(139,92,246,.1); }
   .ar-fade-in { animation: ar-fade .25s ease; }
   @keyframes ar-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-  .ar-panel { backdrop-filter: blur(18px) saturate(1.25); -webkit-backdrop-filter: blur(18px) saturate(1.25); }
+  .ar-panel {
+    backdrop-filter: blur(20px) saturate(1.3);
+    -webkit-backdrop-filter: blur(20px) saturate(1.3);
+    position: relative;
+  }
+  /* subtle animated aurora sweep + grid overlay */
+  .ar-panel::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+    background-image: linear-gradient(rgba(168,139,250,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(168,139,250,.05) 1px, transparent 1px);
+    background-size: 34px 34px;
+    mask-image: radial-gradient(ellipse at 30% 0%, black 0%, transparent 70%);
+    -webkit-mask-image: radial-gradient(ellipse at 30% 0%, black 0%, transparent 70%);
+  }
+  @keyframes ar-neon {
+    0%, 100% { text-shadow: 0 0 8px rgba(192,132,252,.7), 0 0 22px rgba(139,92,246,.4); }
+    50% { text-shadow: 0 0 14px rgba(139,92,246,.9), 0 0 30px rgba(192,132,252,.5); }
+  }
+  .ar-neon { animation: ar-neon 2.6s ease-in-out infinite; }
 `;

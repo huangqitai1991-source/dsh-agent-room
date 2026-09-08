@@ -124,7 +124,7 @@ export function RoomList(props: RoomListProps): React.ReactElement {
                 gap: 8,
                 padding: "8px 12px",
                 cursor: "pointer",
-                background: active ? "linear-gradient(90deg, rgba(91,140,255,.2), rgba(34,211,238,.06))" : "transparent",
+                background: active ? "linear-gradient(90deg, rgba(139,92,246,.24), rgba(192,132,252,.07))" : "transparent",
                 borderLeft: active ? `2px solid ${THEME.accent}` : "2px solid transparent",
                 transition: "background .15s ease",
               }}

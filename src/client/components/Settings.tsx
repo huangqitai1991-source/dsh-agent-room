@@ -33,7 +33,7 @@ export function Settings(props: SettingsProps): React.ReactElement {
   return (
     <div style={{ padding: "0 12px 10px", overflowY: "auto", maxHeight: "52vh" }}>
       {/* relay configuration (node-wide) */}
-      <div style={{ marginTop: 8, border: `1px solid ${THEME.borderStrong}`, borderRadius: 10, padding: 10, background: "linear-gradient(135deg, rgba(34,211,238,.1), rgba(91,140,255,.08))" }}>
+      <div style={{ marginTop: 8, border: `1px solid ${THEME.borderStrong}`, borderRadius: 10, padding: 10, background: "linear-gradient(135deg, rgba(192,132,252,.12), rgba(139,92,246,.1))" }}>
         <SectionTitle icon="🌐">跨网中继（D7）</SectionTitle>
         <Row style={{ padding: "2px 0" }}>
           <input

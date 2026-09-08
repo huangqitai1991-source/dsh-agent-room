@@ -749,13 +749,13 @@ function RoomDock(): React.ReactElement {
           fontSize: 14,
           fontWeight: 700,
           color: "#eef2ff",
-          background: "linear-gradient(135deg, rgba(91,140,255,.28), rgba(34,211,238,.16))",
-          border: "1px solid rgba(120,150,255,.55)",
+          background: "linear-gradient(135deg, rgba(139,92,246,.32), rgba(192,132,252,.16))",
+          border: "1px solid rgba(168,139,250,.6)",
           borderRadius: 999,
           cursor: "pointer",
           whiteSpace: "nowrap",
           userSelect: "none",
-          boxShadow: "0 2px 12px rgba(91,140,255,.35)",
+          boxShadow: "0 2px 14px rgba(139,92,246,.42)",
           transition: "box-shadow .25s ease, transform .25s ease, border-color .25s ease",
         }}
         title={pinned ? "Agent 房间（已固定，点击取消固定）" : "Agent 房间（悬停展开；点击固定）"}
@@ -773,10 +773,10 @@ function RoomDock(): React.ReactElement {
           right: 0,
           width: pinned ? 740 : 620,
           maxWidth: "min(96vw, 740px)",
-          background: THEME.panel,
-          border: "1px solid rgba(120,150,255,.4)",
+          background: THEME.panelGrad,
+          border: "1px solid rgba(168,139,250,.45)",
           borderRadius: 16,
-          boxShadow: "0 20px 60px rgba(0,0,0,.6), 0 0 0 1px rgba(120,150,255,.14), 0 0 32px rgba(91,140,255,.22)",
+          boxShadow: "0 20px 60px rgba(0,0,0,.65), 0 0 0 1px rgba(168,139,250,.16), 0 0 36px rgba(139,92,246,.28)",
           zIndex: 9999,
           overflow: "hidden",
           fontSize: 14,
@@ -794,7 +794,7 @@ function RoomDock(): React.ReactElement {
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: `1px solid ${THEME.border}`, flexShrink: 0 }}>
           <span style={{ fontSize: 17 }}>🤖</span>
           <div>
-            <div style={{ fontWeight: 800, fontSize: 16, letterSpacing: 0.2 }}>Agent 房间</div>
+            <div className="ar-neon" style={{ fontWeight: 800, fontSize: 16, letterSpacing: 0.2 }}>Agent 房间</div>
             <div style={{ fontSize: 12, color: THEME.faint, fontWeight: 400 }}>
               {state ? `${state.identity.nickname} · ${state.rooms.length} 个房间` : "…"}
             </div>
@@ -863,7 +863,7 @@ function RoomDock(): React.ReactElement {
                       fontSize: 13,
                       fontWeight: tab === key ? 700 : 500,
                       color: tab === key ? "#fff" : THEME.dim,
-                      background: tab === key ? "linear-gradient(180deg, rgba(91,140,255,.22), transparent)" : "transparent",
+                      background: tab === key ? "linear-gradient(180deg, rgba(139,92,246,.26), transparent)" : "transparent",
                       borderBottom: tab === key ? `2px solid ${THEME.accent}` : "2px solid transparent",
                     }}
                   >

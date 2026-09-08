@@ -120,7 +120,7 @@ export function TaskBoard(props: TaskBoardProps): React.ReactElement {
               borderRadius: 999,
               cursor: "pointer",
               fontFamily: "inherit",
-              border: filter === f.key ? "1px solid rgba(91,140,255,.6)" : `1px solid ${THEME.border}`,
+              border: filter === f.key ? "1px solid rgba(168,139,250,.65)" : `1px solid ${THEME.border}`,
               background: filter === f.key ? THEME.accentSoft : "transparent",
               color: filter === f.key ? "#fff" : THEME.dim,
               transition: "all .15s ease",

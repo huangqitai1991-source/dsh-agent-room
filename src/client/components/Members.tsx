@@ -62,7 +62,7 @@ export function Members(props: MembersProps): React.ReactElement {
       {room.members.map((m) => {
         const isMe = m.agentId === localAgentId;
         return (
-          <div key={m.agentId} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 2px", borderBottom: `1px solid rgba(120,150,255,.08)` }}>
+          <div key={m.agentId} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 2px", borderBottom: `1px solid rgba(168,139,250,.1)` }}>
             <span style={{ fontSize: 15 }}>{m.role === "owner" ? "👑" : "🤖"}</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
