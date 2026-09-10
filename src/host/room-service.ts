@@ -225,7 +225,7 @@ export class RoomService extends EventEmitter {
   }
 
   listJoinedRooms(): JoinedRoomRecord[] {
-    return [...this.joined];
+    return Array.isArray(this.joined) ? [...this.joined] : [];
   }
 
   getOwnedRoom(roomId: string): Room | undefined {

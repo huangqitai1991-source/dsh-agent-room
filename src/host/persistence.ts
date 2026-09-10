@@ -67,7 +67,8 @@ export class Persistence {
   /* ------------------------------ joined rooms ------------------------- */
 
   async loadJoined(): Promise<JoinedRoomRecord[]> {
-    return (await this.readJson<JoinedRoomRecord[]>(join(this.root, "joined.json"))) ?? [];
+    const data = await this.readJson<JoinedRoomRecord[]>(join(this.root, "joined.json"));
+    return Array.isArray(data) ? data : [];
   }
 
   async saveJoined(records: JoinedRoomRecord[]): Promise<void> {
