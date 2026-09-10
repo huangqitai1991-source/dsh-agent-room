@@ -163,29 +163,53 @@ export class OrgService extends Service {
       return;
     }
 
-    // 2. exec instruction -> execute if targeted at this machine
+    // 2. exec instruction -> execute only if targeted at this machine AND the
+    //    sender is authorized (owner/lead). Receiving side must NOT trust the
+    //    payload alone — any room member could otherwise RCE this node.
     const instruction = decodeExec(text);
     if (instruction) {
       const identity = await this.agentRoom?.gateway?.identity?.();
-      if (identity?.agentId === instruction.targetAgentId) {
-        const outcome = await runCommand(instruction.command, 30000);
-        const reply = {
-          id: instruction.id,
-          by: identity.agentId,
-          ok: outcome.ok,
-          code: outcome.code,
-          stdout: outcome.stdout,
-          stderr: outcome.stderr,
-          timedOut: outcome.timedOut,
-          error: outcome.error,
-        };
-        try {
-          await this.agentRoom?.gateway?.sendChat?.(this.config.syncRoomId, {
-            text: encodeExecResult(reply),
-            human: false,
-          });
-        } catch { /* best-effort */ }
-      }
+      if (identity?.agentId !== instruction.targetAgentId) return; // not for me
+
+      const sender = message?.from ?? "";
+      const senderRole = this.roleOf(sender);
+      const allowed = senderRole === "owner" || senderRole === "lead";
+      const reply = allowed
+        ? await (async () => {
+            const outcome = await runCommand(instruction.command, 30000);
+            return {
+              id: instruction.id,
+              by: identity.agentId,
+              ok: outcome.ok,
+              code: outcome.code,
+              stdout: outcome.stdout,
+              stderr: outcome.stderr,
+              timedOut: outcome.timedOut,
+              error: outcome.error,
+            };
+          })()
+        : {
+            id: instruction.id,
+            by: identity.agentId,
+            ok: false,
+            code: 403,
+            stdout: "",
+            stderr: "",
+            timedOut: false,
+            error: `exec rejected: sender ${sender} role=${senderRole} (仅 owner/lead 可下发)`,
+          };
+      void this.audit.append({
+        agentId: sender,
+        action: "exec",
+        target: instruction.targetAgentId + " :: " + instruction.command,
+        result: allowed ? "executed" : "rejected",
+      });
+      try {
+        await this.agentRoom?.gateway?.sendChat?.(this.config.syncRoomId, {
+          text: encodeExecResult(reply),
+          human: false,
+        });
+      } catch { /* best-effort */ }
       return;
     }
 
@@ -210,6 +234,11 @@ export class OrgService extends Service {
    */
   async sendExec(targetAgentId, command) {
     if (!this.config.syncRoomId) throw new OrgError("no_sync_room", "未配置同步房间，无法远程执行");
+    const identity = await this.agentRoom?.gateway?.identity?.();
+    const callerRole = this.roleOf(identity?.agentId ?? "");
+    if (callerRole !== "owner" && callerRole !== "lead") {
+      throw new OrgError("exec_forbidden", `仅 owner/lead 可发起远程执行（当前 role=${callerRole}）`);
+    }
     const id = uuid();
     const payload = { id, targetAgentId, command: String(command ?? ""), ts: nowIso() };
     const resultPromise = new Promise((resolve) => {
