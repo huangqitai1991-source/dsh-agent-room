@@ -119,7 +119,7 @@ export class OrgService extends Service {
   async setSyncRoom(roomId) {
     this.config.syncRoomId = String(roomId ?? "").trim();
     await this.persistence.saveSyncConfig({ roomId: this.config.syncRoomId });
-    if (this.config.syncRoomId) await this.broadcastSnapshot();
+    if (this.config.syncRoomId) await this.save(); // bump rev + persist + broadcast
     return { roomId: this.config.syncRoomId };
   }
 
@@ -134,8 +134,10 @@ export class OrgService extends Service {
   async broadcastSnapshot() {
     if (!this.config.syncRoomId || !this.syncReady) return;
     try {
+      const identity = await this.agentRoom?.gateway?.identity?.();
+      const ownerAgentId = this.state.nodes.find((n) => n.kind === "company")?.leaderAgentId ?? "";
       await this.agentRoom?.gateway?.sendChat?.(this.config.syncRoomId, {
-        text: encodeSnapshot(this.state),
+        text: encodeSnapshot(this.state, { by: identity?.agentId ?? "", ownerAgentId }),
         human: false,
       });
     } catch {
@@ -189,8 +191,15 @@ export class OrgService extends Service {
 
     // 3. org snapshot sync
     const snapshot = decodeSnapshot(text);
-    if (!snapshot || !shouldApply(this.state, snapshot)) return;
-    this.state = snapshot;
+    if (!snapshot) return;
+    const identity = await this.agentRoom?.gateway?.identity?.();
+    if (!shouldApply(this.state, snapshot, identity?.agentId ?? "")) return;
+    this.state = {
+      version: snapshot.version,
+      nodes: snapshot.nodes,
+      updatedAt: snapshot.updatedAt,
+      rev: snapshot.rev,
+    };
     await this.persistence.save(this.state);
   }
 
