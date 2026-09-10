@@ -270,4 +270,101 @@ export function apply(ctx) {
       },
     }),
   );
+
+  register(
+    defineTool({
+      name: "org_exec",
+      description: "Run a shell command on a target machine's agent and get the result back. Requires the sync room to be configured. Controller-only.",
+      parameters: {
+        targetAgentId: { type: "string", required: true, description: "Target machine's agentId (e.g. an assistant's agentId)." },
+        command: { type: "string", required: true, description: "Shell command to run on the target machine." },
+      },
+      output: {
+        schema: okSchema({
+          id: { type: "string" },
+          ok: { type: "boolean" },
+          code: { type: "number" },
+          stdout: { type: "string" },
+          stderr: { type: "string" },
+          timedOut: { type: "boolean" },
+          error: { type: "string" },
+        }),
+        render: textRender,
+      },
+      async execute(args) {
+        const result = await org.sendExec(args.targetAgentId, args.command);
+        return result;
+      },
+    }),
+  );
+
+  register(
+    defineTool({
+      name: "org_my_permissions",
+      description: "Report my org role (owner/lead/member/observer) and the permission outcome for each action.",
+      parameters: {},
+      output: {
+        schema: okSchema({
+          role: { type: "string" },
+          actions: { type: "object" },
+        }),
+        render: textRender,
+      },
+      async execute() {
+        const identity = await org.agentRoom.gateway.identity();
+        const role = org.roleOf(identity.agentId);
+        const actions = {};
+        for (const a of ["chat", "view_tasks", "claim_task", "update_own_task", "complete_task", "assign_cross_dept", "delete_room", "change_roles", "kick_member", "delete_task"]) {
+          actions[a] = org.check(identity.agentId, a);
+        }
+        return { role, actions };
+      },
+    }),
+  );
+
+  register(
+    defineTool({
+      name: "org_request_approval",
+      description: "Request approval for an L2 action (cross-dept assignment, delete room, change roles, kick, delete task). Returns a pending approval or a note that none is needed.",
+      parameters: {
+        action: { type: "string", required: true, description: "L2 action key." },
+        target: { type: "string", description: "Target of the action (room id / task id / member id)." },
+      },
+      output: { schema: okSchema({ id: { type: "string" }, decision: { type: "object" }, approval: { type: "object" }, note: { type: "string" } }), render: textRender },
+      async execute(args) {
+        const identity = await org.agentRoom.gateway.identity();
+        return org.requestApproval(identity.agentId, args.action, args.target ?? "");
+      },
+    }),
+  );
+
+  register(
+    defineTool({
+      name: "org_decide_approval",
+      description: "Approve or reject a pending approval (approver only).",
+      parameters: {
+        approvalId: { type: "string", required: true, description: "Approval id." },
+        approve: { type: "boolean", required: true, description: "true = approve, false = reject." },
+      },
+      output: { schema: okSchema({ approval: { type: "object" } }, ["approval"]), render: textRender },
+      async execute(args) {
+        const identity = await org.agentRoom.gateway.identity();
+        const approval = org.decide(args.approvalId, identity.agentId, Boolean(args.approve));
+        return { approval };
+      },
+    }),
+  );
+
+  register(
+    defineTool({
+      name: "org_audit",
+      description: "Export the full audit log (who / when / what action / result). Owner sees all; others see only what concerns them.",
+      parameters: {},
+      output: { schema: okSchema({ entries: { type: "array" } }, ["entries"]), render: textRender },
+      async execute() {
+        const entries = await org.exportAudit();
+        return { entries };
+      },
+    }),
+  );
 }

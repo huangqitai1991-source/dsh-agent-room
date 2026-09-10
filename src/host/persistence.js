@@ -51,4 +51,26 @@ export class OrgPersistence {
     await writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
     await rename(tmp, this.file);
   }
+
+  /** Load the sync room config ({ roomId?: string }). */
+  async loadSyncConfig() {
+    const file = join(this.root, "sync-config.json");
+    try {
+      const raw = await readFile(file, "utf8");
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch {
+      // missing/corrupt -> empty
+    }
+    return {};
+  }
+
+  /** Persist the sync room config. */
+  async saveSyncConfig(config) {
+    await mkdir(this.root, { recursive: true });
+    const file = join(this.root, "sync-config.json");
+    const tmp = `${file}.tmp`;
+    await writeFile(tmp, JSON.stringify(config, null, 2), "utf8");
+    await rename(tmp, file);
+  }
 }

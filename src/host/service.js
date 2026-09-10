@@ -11,6 +11,15 @@ import { Service } from "@deepseek-ai/cordis";
 import { OrgPersistence } from "./persistence.js";
 import { decodeSnapshot, encodeSnapshot, shouldApply } from "./sync.js";
 import {
+  decodeExec,
+  decodeExecResult,
+  encodeExec,
+  encodeExecResult,
+  runCommand,
+} from "./exec.js";
+import { checkPermission, roleFor } from "./permission.js";
+import { AuditLog } from "./audit.js";
+import {
   buildTree,
   childrenOf,
   descendantNodes,
@@ -60,6 +69,11 @@ export class OrgService extends Service {
     this.agentRoom = ctx.agentRoom;
     this.lastEvent = null;
     this.syncReady = false;
+    /** @type {Map<string, {resolve: Function, timer: NodeJS.Timeout}>} */
+    this.pendingExec = new Map();
+    this.audit = new AuditLog(this.config.dataDir);
+    /** @type {Map<string, {id: string, action: string, target: string, requester: string, approver: string, status: "pending"|"approved"|"rejected", ts: string}>} */
+    this.approvals = new Map();
 
     // agent-org listens to agent-room's RoomService events. In v1 this is used
     // to keep a lightweight activity marker; summaries are always computed on
@@ -87,7 +101,26 @@ export class OrgService extends Service {
   async boot() {
     this.state = await this.persistence.load();
     if (typeof this.state.rev !== "number") this.state.rev = 0;
+    const syncCfg = await this.persistence.loadSyncConfig();
+    if (syncCfg.roomId) this.config.syncRoomId = String(syncCfg.roomId);
     this.syncReady = true;
+  }
+
+  /** @returns {{roomId?: string}} */
+  async getSyncConfig() {
+    return { roomId: this.config.syncRoomId || "" };
+  }
+
+  /**
+   * Set (or clear) the cross-machine sync room at runtime; persisted so it
+   * survives restarts.
+   * @param {string} roomId
+   */
+  async setSyncRoom(roomId) {
+    this.config.syncRoomId = String(roomId ?? "").trim();
+    await this.persistence.saveSyncConfig({ roomId: this.config.syncRoomId });
+    if (this.config.syncRoomId) await this.broadcastSnapshot();
+    return { roomId: this.config.syncRoomId };
   }
 
   async save() {
@@ -111,13 +144,77 @@ export class OrgService extends Service {
     }
   }
 
-  /** Apply an inbound org snapshot when it is newer than the local tree. */
+  /** Apply an inbound org snapshot / exec instruction / exec result. */
   async onChat(roomId, message) {
+    const text = message?.text;
     if (!this.config.syncRoomId || roomId !== this.config.syncRoomId) return;
-    const snapshot = decodeSnapshot(message?.text);
+
+    // 1. exec result -> resolve the pending sender
+    const result = decodeExecResult(text);
+    if (result) {
+      const pending = this.pendingExec.get(result.id);
+      if (pending) {
+        this.pendingExec.delete(result.id);
+        clearTimeout(pending.timer);
+        pending.resolve(result);
+      }
+      return;
+    }
+
+    // 2. exec instruction -> execute if targeted at this machine
+    const instruction = decodeExec(text);
+    if (instruction) {
+      const identity = await this.agentRoom?.gateway?.identity?.();
+      if (identity?.agentId === instruction.targetAgentId) {
+        const outcome = await runCommand(instruction.command, 30000);
+        const reply = {
+          id: instruction.id,
+          by: identity.agentId,
+          ok: outcome.ok,
+          code: outcome.code,
+          stdout: outcome.stdout,
+          stderr: outcome.stderr,
+          timedOut: outcome.timedOut,
+          error: outcome.error,
+        };
+        try {
+          await this.agentRoom?.gateway?.sendChat?.(this.config.syncRoomId, {
+            text: encodeExecResult(reply),
+            human: false,
+          });
+        } catch { /* best-effort */ }
+      }
+      return;
+    }
+
+    // 3. org snapshot sync
+    const snapshot = decodeSnapshot(text);
     if (!snapshot || !shouldApply(this.state, snapshot)) return;
     this.state = snapshot;
     await this.persistence.save(this.state);
+  }
+
+  /**
+   * Send a remote exec instruction to a target machine and await its result.
+   * @param {string} targetAgentId
+   * @param {string} command
+   */
+  async sendExec(targetAgentId, command) {
+    if (!this.config.syncRoomId) throw new OrgError("no_sync_room", "未配置同步房间，无法远程执行");
+    const id = uuid();
+    const payload = { id, targetAgentId, command: String(command ?? ""), ts: nowIso() };
+    const resultPromise = new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingExec.delete(id);
+        resolve({ id, ok: false, code: null, stdout: "", stderr: "", timedOut: true, error: "exec timed out waiting for result" });
+      }, 35000);
+      this.pendingExec.set(id, { resolve, timer });
+    });
+    await this.agentRoom.gateway.sendChat(this.config.syncRoomId, {
+      text: encodeExec(payload),
+      human: false,
+    });
+    return resultPromise;
   }
 
   /**
@@ -182,6 +279,84 @@ export class OrgService extends Service {
       memberId: members[0].id,
       company: company ? { id: company.id, name: company.name } : null,
     };
+  }
+
+  /* --------------------- permission matrix + approvals + audit ------------- */
+
+  /** @param {string} agentId */
+  roleOf(agentId) {
+    return roleFor(this.state, agentId);
+  }
+
+  /**
+   * @param {string} agentId
+   * @param {string} action
+   */
+  check(agentId, action) {
+    return checkPermission(this.state, agentId, action);
+  }
+
+  /**
+   * Create a pending approval for an L2 action and log it.
+   * @param {string} requester
+   * @param {string} action
+   * @param {string} target
+   */
+  requestApproval(requester, action, target) {
+    const decision = checkPermission(this.state, requester, action);
+    if (!decision.needsApproval) {
+      return { id: null, decision, note: decision.allowed ? "无需审批" : "无权执行" };
+    }
+    const id = uuid();
+    const approval = {
+      id,
+      action,
+      target: String(target ?? ""),
+      requester,
+      approver: decision.approver ?? "",
+      status: "pending",
+      ts: nowIso(),
+    };
+    this.approvals.set(id, approval);
+    void this.audit.append({ agentId: requester, action, target, result: "requested" });
+    return { id, decision, approval };
+  }
+
+  /**
+   * @param {string} approvalId
+   * @param {string} approverAgentId
+   */
+  decide(approvalId, approverAgentId, approve) {
+    const approval = this.approvals.get(approvalId);
+    if (!approval) throw new OrgError("approval_not_found", "审批单不存在");
+    if (approval.approver && approverAgentId !== approval.approver) {
+      throw new OrgError("not_approver", "只有指定的审批人可以处理此审批");
+    }
+    approval.status = approve ? "approved" : "rejected";
+    approval.decidedBy = approverAgentId;
+    approval.decidedAt = nowIso();
+    void this.audit.append({
+      agentId: approverAgentId,
+      action: "approve:" + approval.action,
+      target: approval.id,
+      result: approve ? "approved" : "rejected",
+    });
+    return approval;
+  }
+
+  /**
+   * @param {string} viewerAgentId
+   */
+  listApprovals(viewerAgentId) {
+    const role = this.roleOf(viewerAgentId);
+    const all = [...this.approvals.values()];
+    if (role === "owner") return all;
+    return all.filter((a) => a.approver === viewerAgentId || a.requester === viewerAgentId);
+  }
+
+  /** @returns {Promise<Array>} */
+  exportAudit() {
+    return this.audit.export();
   }
 
   /** @returns {import("../types.js").OrgState} */

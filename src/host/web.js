@@ -31,6 +31,55 @@ export function createRouter(service) {
         return sendJson(response, 200, { ok: true, data: { identity: identity ?? null, ...role } });
       }
 
+      if (method === "GET" && path === "/agent-org-api/sync") {
+        const data = await service.getSyncConfig();
+        return sendJson(response, 200, { ok: true, data });
+      }
+
+      if (method === "POST" && path === "/agent-org-api/sync") {
+        const body = await readJson(request);
+        const data = await service.setSyncRoom(body.roomId === undefined ? "" : String(body.roomId ?? ""));
+        return sendJson(response, 200, { ok: true, data });
+      }
+
+      if (method === "POST" && path === "/agent-org-api/exec") {
+        const body = await readJson(request);
+        const data = await service.sendExec(String(body.targetAgentId ?? ""), String(body.command ?? ""));
+        return sendJson(response, 200, { ok: true, data });
+      }
+
+      if (method === "GET" && path === "/agent-org-api/permissions") {
+        const identity = await service.agentRoom?.gateway?.identity?.();
+        const agentId = identity?.agentId ?? "";
+        const role = service.roleOf(agentId);
+        return sendJson(response, 200, { ok: true, data: { identity: identity ?? null, role } });
+      }
+
+      if (method === "POST" && path === "/agent-org-api/approvals") {
+        const body = await readJson(request);
+        const identity = await service.agentRoom?.gateway?.identity?.();
+        const data = service.requestApproval(identity?.agentId ?? "", String(body.action ?? ""), String(body.target ?? ""));
+        return sendJson(response, 200, { ok: true, data });
+      }
+
+      if (method === "GET" && path === "/agent-org-api/approvals") {
+        const identity = await service.agentRoom?.gateway?.identity?.();
+        const data = service.listApprovals(identity?.agentId ?? "");
+        return sendJson(response, 200, { ok: true, data });
+      }
+
+      const approvalMatch = /^\/agent-org-api\/approvals\/([^/]+)\/(approve|reject)$/.exec(path);
+      if (method === "POST" && approvalMatch) {
+        const identity = await service.agentRoom?.gateway?.identity?.();
+        const data = service.decide(decodeURIComponent(approvalMatch[1]), identity?.agentId ?? "", approvalMatch[2] === "approve");
+        return sendJson(response, 200, { ok: true, data });
+      }
+
+      if (method === "GET" && path === "/agent-org-api/audit") {
+        const data = await service.exportAudit();
+        return sendJson(response, 200, { ok: true, data });
+      }
+
       if (method === "POST" && path === "/agent-org-api/studio") {
         const body = await readJson(request);
         const state = await service.applyStudioPreset({
