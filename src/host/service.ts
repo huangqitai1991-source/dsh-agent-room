@@ -776,6 +776,32 @@ export class AgentRoomService extends Service {
     // Listening sweep: rule-layer scan of listening rooms, wake the agent only
     // when a message needs it (0-token unless something actually needs a reply).
     this.listenTimer = setInterval(() => void this.sweepListening(), 30_000);
+    // Restore membership of rooms we joined before: recreate the client so
+    // inbound sync/exec/task frames flow again without a manual re-join.
+    void this.autoRejoinJoinedRooms();
+  }
+
+  /** Reconnect to every room recorded in joined.json (idempotent). */
+  private autoRejoinJoinedRooms(): void {
+    for (const record of this.roomService.listJoinedRooms()) {
+      if (!record?.roomId || !record?.address) continue;
+      void this.rejoinWithRetry(record.roomId, record.address, 0);
+    }
+  }
+
+  /** Best-effort rejoin with a short backoff; manual join is still the override. */
+  private async rejoinWithRetry(roomId: string, address: string, attempt: number): Promise<void> {
+    if (this.clients.has(roomId)) return; // already connected (manual join won the race)
+    try {
+      await this.gateway.joinRoom([address], { roomId });
+      this.ctx.logger?.info?.("[agent-room] auto-rejoined room %s at %s", roomId, address);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.ctx.logger?.warn?.("[agent-room] auto-rejoin failed for %s (attempt %d): %s", roomId, attempt + 1, message);
+      if (attempt < 5) {
+        setTimeout(() => void this.rejoinWithRetry(roomId, address, attempt + 1), 10_000 * (attempt + 1));
+      }
+    }
   }
 
   /** Broadcast our current identity to every joined room (nickname/capabilities). */
