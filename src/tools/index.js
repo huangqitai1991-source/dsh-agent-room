@@ -217,4 +217,57 @@ export function apply(ctx) {
       },
     }),
   );
+
+  register(
+    defineTool({
+      name: "org_apply_studio",
+      description: "Build the AI studio org: one company led by the controller, with the given assistants as members under a default 总部 department. Idempotent — missing nodes are added, existing ones are kept.",
+      parameters: {
+        company: { type: "string", description: "Company name; defaults to AI 工作室." },
+        controllerAgentId: { type: "string", description: "Controller (主控) agentId; also set as the company leader." },
+        members: {
+          type: "array",
+          description: "Assistant members.",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              agentId: { type: "string" },
+              name: { type: "string" },
+            },
+            required: ["agentId"],
+          },
+        },
+      },
+      output: { schema: okSchema({ nodes: { type: "array" } }, ["nodes"]), render: textRender },
+      async execute(args) {
+        const state = await org.applyStudioPreset({
+          company: args.company,
+          controllerAgentId: args.controllerAgentId,
+          members: Array.isArray(args.members) ? args.members : [],
+        });
+        return { nodes: state.nodes };
+      },
+    }),
+  );
+
+  register(
+    defineTool({
+      name: "org_my_role",
+      description: "Report the current agent's role in the org: controller (主控), member (助手), or none.",
+      parameters: {},
+      output: {
+        schema: okSchema({
+          role: { type: "string" },
+          memberId: { type: "string" },
+          company: { type: "object" },
+        }),
+        render: textRender,
+      },
+      async execute() {
+        const identity = await org.agentRoom.gateway.identity();
+        return org.myRole(identity.agentId);
+      },
+    }),
+  );
 }

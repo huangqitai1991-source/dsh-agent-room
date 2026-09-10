@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Service } from "@deepseek-ai/cordis";
 import { OrgPersistence } from "./persistence.js";
+import { decodeSnapshot, encodeSnapshot, shouldApply } from "./sync.js";
 import {
   buildTree,
   childrenOf,
@@ -34,13 +35,14 @@ export class OrgError extends Error {
 }
 
 /**
- * @param {{ dataDir?: string, tools?: boolean }} config
+ * @param {{ dataDir?: string, tools?: boolean, syncRoomId?: string }} config
  */
 export function resolveConfig(config = {}) {
   const dshHome = process.env.DSH_HOME ?? join(homedir(), ".dsh");
   return {
     dataDir: config.dataDir ?? join(dshHome, "agent-org"),
     tools: config.tools ?? true,
+    syncRoomId: config.syncRoomId ?? "",
   };
 }
 
@@ -54,19 +56,21 @@ export class OrgService extends Service {
     this.config = resolveConfig(config);
     this.persistence = new OrgPersistence(this.config.dataDir);
     /** @type {import("../types.js").OrgState} */
-    this.state = { version: 1, nodes: [], updatedAt: "" };
+    this.state = { version: 1, nodes: [], updatedAt: "", rev: 0 };
     this.agentRoom = ctx.agentRoom;
     this.lastEvent = null;
+    this.syncReady = false;
 
     // agent-org listens to agent-room's RoomService events. In v1 this is used
     // to keep a lightweight activity marker; summaries are always computed on
-    // demand so no cache invalidation race is possible.
+    // demand so no cache invalidation race is possible. v2.1 also syncs the org
+    // tree across machines by watching chat messages in the sync room.
     const roomService = this.agentRoom?.roomService;
     if (roomService?.on) {
       const touch = (eventName) => () => {
         this.lastEvent = { event: eventName, at: nowIso() };
       };
-      roomService.on("chat", touch("chat"));
+      roomService.on("chat", (roomId, message) => this.onChat(roomId, message));
       roomService.on("task", touch("task"));
       roomService.on("taskRemoved", touch("taskRemoved"));
       roomService.on("system", touch("system"));
@@ -82,11 +86,102 @@ export class OrgService extends Service {
 
   async boot() {
     this.state = await this.persistence.load();
+    if (typeof this.state.rev !== "number") this.state.rev = 0;
+    this.syncReady = true;
   }
 
   async save() {
     this.state.updatedAt = nowIso();
+    this.state.rev = (typeof this.state.rev === "number" ? this.state.rev : 0) + 1;
     await this.persistence.save(this.state);
+    await this.broadcastSnapshot();
+  }
+
+  /** Broadcast the org snapshot to the sync room (cross-machine sync). */
+  async broadcastSnapshot() {
+    if (!this.config.syncRoomId || !this.syncReady) return;
+    try {
+      await this.agentRoom?.gateway?.sendChat?.(this.config.syncRoomId, {
+        text: encodeSnapshot(this.state),
+        human: false,
+      });
+    } catch {
+      // Sync is best-effort; a node that is offline simply misses a snapshot
+      // and catches up on the next broadcast.
+    }
+  }
+
+  /** Apply an inbound org snapshot when it is newer than the local tree. */
+  async onChat(roomId, message) {
+    if (!this.config.syncRoomId || roomId !== this.config.syncRoomId) return;
+    const snapshot = decodeSnapshot(message?.text);
+    if (!snapshot || !shouldApply(this.state, snapshot)) return;
+    this.state = snapshot;
+    await this.persistence.save(this.state);
+  }
+
+  /**
+   * Studio preset: idempotently build the org for the boss's AI studio.
+   * company (leader = controller) → members (assistants).
+   *
+   * @param {{company?: string, controllerAgentId?: string, members?: Array<{agentId: string, name?: string}>}} input
+   */
+  async applyStudioPreset(input = {}) {
+    const companyName = String(input.company ?? "AI 工作室").trim() || "AI 工作室";
+    const controller = String(input.controllerAgentId ?? "").trim();
+    const members = Array.isArray(input.members) ? input.members : [];
+
+    let company = this.state.nodes.find((n) => n.kind === "company");
+    if (!company) {
+      company = await this.createCompany(companyName);
+    }
+    if (controller) {
+      // 主控必须是组织内的成员，先挂在公司下（部门可留空，成员直接挂公司需要调整 ——
+      // v1 要求成员挂部门/团队下，这里为公司建一个默认「总部」部门承载成员）。
+      const dept = await this.ensureDepartment(company.id, "总部");
+      await this.ensureMember(dept.id, controller, "主控");
+      await this.setLeader(company.id, controller);
+    }
+    for (const m of members) {
+      const agentId = String(m.agentId ?? "").trim();
+      if (!agentId) continue;
+      const dept = await this.ensureDepartment(company.id, "总部");
+      await this.ensureMember(dept.id, agentId, m.name ?? agentId);
+    }
+    return this.state;
+  }
+
+  /** @param {string} companyId @param {string} name */
+  async ensureDepartment(companyId, name) {
+    const existing = this.state.nodes.find((n) => n.kind === "department" && n.parentId === companyId && n.name === name);
+    if (existing) return existing;
+    return this.createDepartment(companyId, name);
+  }
+
+  /** @param {string} parentId @param {string} agentId @param {string} name */
+  async ensureMember(parentId, agentId, name) {
+    const existing = this.state.nodes.find((n) => n.kind === "member" && n.agentId === agentId);
+    if (existing) return existing;
+    return this.addMember(parentId, { agentId, name });
+  }
+
+  /**
+   * Current agent's role in the org: "controller" (leads a company/unit),
+   * "member", or "none".
+   * @param {string} agentId
+   */
+  async myRole(agentId) {
+    const members = memberNodesByAgent(this.state, agentId);
+    if (members.length === 0) return { role: "none", memberId: null, company: null };
+    const leading = this.state.nodes.find(
+      (n) => n.kind !== "member" && n.leaderAgentId === agentId,
+    );
+    const company = this.state.nodes.find((n) => n.kind === "company") ?? null;
+    return {
+      role: leading ? "controller" : "member",
+      memberId: members[0].id,
+      company: company ? { id: company.id, name: company.name } : null,
+    };
   }
 
   /** @returns {import("../types.js").OrgState} */

@@ -1,6 +1,6 @@
 {
   "name": "dsh-agent-org",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Company/org management for DSH: org tree, member assignment, and hierarchical task visibility on top of dsh-agent-room.",
   "type": "module",
   "main": "./src/host/index.js",

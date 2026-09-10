@@ -25,6 +25,24 @@ export function createRouter(service) {
         return sendJson(response, 200, { ok: true, data });
       }
 
+      if (method === "GET" && path === "/agent-org-api/me") {
+        const identity = await service.agentRoom?.gateway?.identity?.();
+        const role = await service.myRole(identity?.agentId ?? "");
+        return sendJson(response, 200, { ok: true, data: { identity: identity ?? null, ...role } });
+      }
+
+      if (method === "POST" && path === "/agent-org-api/studio") {
+        const body = await readJson(request);
+        const state = await service.applyStudioPreset({
+          company: body.company ? String(body.company) : undefined,
+          controllerAgentId: body.controllerAgentId ? String(body.controllerAgentId) : undefined,
+          members: Array.isArray(body.members)
+            ? body.members.map((m) => ({ agentId: String(m.agentId ?? ""), name: m.name ? String(m.name) : undefined }))
+            : undefined,
+        });
+        return sendJson(response, 200, { ok: true, data: { nodes: state.nodes } });
+      }
+
       if (method === "POST" && path === "/agent-org-api/company") {
         const body = await readJson(request);
         const node = await service.createCompany(String(body.name ?? "").trim());
