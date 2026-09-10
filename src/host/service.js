@@ -624,6 +624,8 @@ export class OrgService extends Service {
       identity: identity ?? null,
       nodes: this.listNodes(),
       tree: buildTree(this.state),
+      rev: typeof this.state.rev === "number" ? this.state.rev : 0,
+      updatedAt: this.state.updatedAt ?? "",
       visibleMemberIds: [...visibleIds],
       visibleMembers: visibleMemberNodes(this.state, viewer).map((n) => ({
         id: n.id,
