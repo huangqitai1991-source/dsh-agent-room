@@ -10,6 +10,7 @@ import { EventEmitter } from "node:events";
 import { WebSocket } from "ws";
 import type { AgentIdentity, RoomSnapshot, ChatMessage, SystemEvent, Task, TaskHandoff, RoleKey, JoinedRoomRecord } from "../types.js";
 import type { ClientFrame, ServerFrame, TaskCreatePayload } from "./protocol.js";
+import { reconnectDelay } from "./protocol.js";
 import { nowIso, uuidv7 } from "./util.js";
 
 export interface RoomClientEvents {
@@ -286,7 +287,7 @@ export class RoomClient extends EventEmitter {
 
   private scheduleReconnect(): void {
     if (this.left || this.reconnectTimer) return;
-    const delay = Math.min(1000 * 2 ** this.reconnectAttempt, 30_000);
+    const delay = reconnectDelay(this.reconnectAttempt);
     this.reconnectAttempt += 1;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
