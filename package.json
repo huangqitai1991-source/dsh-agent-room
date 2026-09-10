@@ -1,0 +1,51 @@
+{
+  "name": "dsh-agent-org",
+  "version": "0.1.0",
+  "description": "Company/org management for DSH: org tree, member assignment, and hierarchical task visibility on top of dsh-agent-room.",
+  "type": "module",
+  "main": "./src/host/index.js",
+  "exports": {
+    ".": "./src/host/index.js",
+    "./client": "./src/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh-CN.md"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node test/visibility.test.mjs"
+  },
+  "peerDependencies": {
+    "dsh-agent-room": ">=0.1.4"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.7",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "react": "^19.0.0",
+    "typescript": "^5.7.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "platform": "web"
+    }
+  },
+  "license": "Apache-2.0"
+}

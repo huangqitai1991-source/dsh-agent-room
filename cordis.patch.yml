@@ -1,0 +1,5 @@
+# dsh-agent-org profile patch layer: insert the plugin into the loader tree.
+# It depends on dsh-agent-room, so agent-room must be loaded first in the bundle.
+- insert:
+    - id: agent-org
+      name: dsh-agent-org
