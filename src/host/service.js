@@ -11,12 +11,21 @@ import { Service } from "@deepseek-ai/cordis";
 import { OrgPersistence } from "./persistence.js";
 import { decodeSnapshot, encodeSnapshot, shouldApply } from "./sync.js";
 import {
+  EXEC_TIMEOUT_MS,
+  EXEC_WAIT_TIMEOUT_MS,
   decodeExec,
   decodeExecResult,
   encodeExec,
   encodeExecResult,
   runCommand,
 } from "./exec.js";
+
+/**
+ * How many handled instruction ids to remember for the replay guard. Large
+ * enough to cover any realistic reconnect burst, small enough to stay trivial
+ * in memory.
+ */
+const SEEN_EXEC_ID_LIMIT = 1000;
 import { checkPermission, roleFor } from "./permission.js";
 import { AuditLog } from "./audit.js";
 import {
@@ -71,6 +80,17 @@ export class OrgService extends Service {
     this.syncReady = false;
     /** @type {Map<string, {resolve: Function, timer: NodeJS.Timeout}>} */
     this.pendingExec = new Map();
+    /**
+     * Instruction ids this node has already handled. Bounded FIFO — see the
+     * replay guard in applyInbound for why it exists.
+     * @type {Set<string>}
+     */
+    this.seenExecIds = new Set();
+    // Replay counters, keyed by exec id. A reconnecting node re-syncs the tail of
+    // the sync room and hands every already-seen frame to onChat again; auditing
+    // each of those writes grew a real machine's audit.jsonl to 411 MB / 1.26M
+    // identical lines for ONE instruction. Count them, audit the first one only.
+    this.replayCounts = new Map();
     this.audit = new AuditLog(this.config.dataDir);
     /** @type {Map<string, {id: string, action: string, target: string, requester: string, approver: string, status: "pending"|"approved"|"rejected", ts: string}>} */
     this.approvals = new Map();
@@ -171,12 +191,44 @@ export class OrgService extends Service {
       const identity = await this.agentRoom?.gateway?.identity?.();
       if (identity?.agentId !== instruction.targetAgentId) return; // not for me
 
+      // REPLAY GUARD. agent-org frames are plain room messages, so a reconnecting
+      // node re-syncs the tail of the room history and hands every frame to this
+      // handler again. Without this guard an instruction runs once per reconnect —
+      // and since each run replies with another room message, the history grows
+      // and the replay grows with it. On 2026-09-12 that reached 25,346 exec
+      // frames and a machine died in a ~90ms reconnect loop. One instruction must
+      // mean one execution, however many times it is delivered.
+      if (this.seenExecIds.has(instruction.id)) {
+        const replays = (this.replayCounts.get(instruction.id) ?? 0) + 1;
+        this.replayCounts.set(instruction.id, replays);
+        if (replays === 1) {
+          // First re-delivery is worth a line; the 1.26M that may follow are not.
+          void this.audit.append({
+            agentId: message?.from ?? "",
+            action: "exec",
+            target: instruction.targetAgentId + " :: " + instruction.command,
+            result: "skipped(replay)",
+          });
+        }
+        if (this.replayCounts.size > SEEN_EXEC_ID_LIMIT) {
+          const oldestReplay = this.replayCounts.keys().next().value;
+          if (oldestReplay !== undefined) this.replayCounts.delete(oldestReplay);
+        }
+        return;
+      }
+      this.seenExecIds.add(instruction.id);
+      if (this.seenExecIds.size > SEEN_EXEC_ID_LIMIT) {
+        // Bounded FIFO: Set preserves insertion order, so the oldest id is first.
+        const oldest = this.seenExecIds.values().next().value;
+        if (oldest !== undefined) this.seenExecIds.delete(oldest);
+      }
+
       const sender = message?.from ?? "";
       const senderRole = this.roleOf(sender);
       const allowed = senderRole === "owner" || senderRole === "lead";
       const reply = allowed
         ? await (async () => {
-            const outcome = await runCommand(instruction.command, 30000);
+            const outcome = await runCommand(instruction.command, EXEC_TIMEOUT_MS);
             return {
               id: instruction.id,
               by: identity.agentId,
@@ -245,7 +297,7 @@ export class OrgService extends Service {
       const timer = setTimeout(() => {
         this.pendingExec.delete(id);
         resolve({ id, ok: false, code: null, stdout: "", stderr: "", timedOut: true, error: "exec timed out waiting for result" });
-      }, 35000);
+      }, EXEC_WAIT_TIMEOUT_MS);
       this.pendingExec.set(id, { resolve, timer });
     });
     await this.agentRoom.gateway.sendChat(this.config.syncRoomId, {
