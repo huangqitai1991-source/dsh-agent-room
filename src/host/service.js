@@ -9,24 +9,17 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Service } from "@deepseek-ai/cordis";
 import { OrgPersistence } from "./persistence.js";
+import { clearRefusedMarker, ensureBackupRoot, failLoud, isUuidShaped, nicknameProblem } from "./safety.js";
 import { decodeSnapshot, encodeSnapshot, shouldApply } from "./sync.js";
-import {
-  EXEC_TIMEOUT_MS,
-  EXEC_WAIT_TIMEOUT_MS,
-  decodeExec,
-  decodeExecResult,
-  encodeExec,
-  encodeExecResult,
-  runCommand,
-} from "./exec.js";
+import { decodeExec, decodeExecResult } from "./exec.js";
+import { ExecPlane } from "./exec-plane.js";
+import { ExecResultCache } from "./exec-cache.js";
+import { sendWithRetry } from "./delivery.js";
 
-/**
- * How many handled instruction ids to remember for the replay guard. Large
- * enough to cover any realistic reconnect burst, small enough to stay trivial
- * in memory.
- */
-const SEEN_EXEC_ID_LIMIT = 1000;
-import { checkPermission, roleFor } from "./permission.js";
+/** One warning per key per minute: a broken channel must not flood the log. */
+const WARN_WINDOW_MS = 60_000;
+
+import { checkPermission, canRenameNode, roleFor } from "./permission.js";
 import { AuditLog } from "./audit.js";
 import {
   buildTree,
@@ -78,20 +71,35 @@ export class OrgService extends Service {
     this.agentRoom = ctx.agentRoom;
     this.lastEvent = null;
     this.syncReady = false;
-    /** @type {Map<string, {resolve: Function, timer: NodeJS.Timeout}>} */
-    this.pendingExec = new Map();
     /**
-     * Instruction ids this node has already handled. Bounded FIFO — see the
-     * replay guard in applyInbound for why it exists.
-     * @type {Set<string>}
+     * Idempotency key + result cache (0.2.10): instruction id -> state
+     * (executing/executed/failed) and the exact result body.
+     *
+     * Replaces the old `seenExecIds` set, which dropped every re-delivery and
+     * sent nothing back — so the sender waited out its own timeout while the
+     * target had already received and answered the frame. Bounded LRU + TTL.
+     * @type {ExecResultCache}
      */
-    this.seenExecIds = new Set();
-    // Replay counters, keyed by exec id. A reconnecting node re-syncs the tail of
-    // the sync room and hands every already-seen frame to onChat again; auditing
-    // each of those writes grew a real machine's audit.jsonl to 411 MB / 1.26M
-    // identical lines for ONE instruction. Count them, audit the first one only.
-    this.replayCounts = new Map();
+    this.execCache = new ExecResultCache();
+    /**
+     * The exec plane owns every delivery guarantee: exactly-once execution per
+     * instruction id, an answer for every delivery (cached result, or "still
+     * executing"), and the controller-side wait. Kept free of cordis so it can be
+     * unit-tested directly — see test/exec-cache.test.mjs.
+     * @type {ExecPlane}
+     */
+    this.execPlane = new ExecPlane({
+      identityAgentId: async () => (await this.agentRoom?.gateway?.identity?.())?.agentId ?? "",
+      roleOf: (agentId) => this.roleOf(agentId),
+      send: (text, meta) => this.sendControlFrame(text, meta),
+      audit: (entry) => void this.audit.append(entry),
+      warn: (key, message) => this.warnRateLimited(key, message),
+      cache: this.execCache,
+    });
+    /** Rate-limited warning bookkeeping: key -> last time it was logged. */
+    this.warnAt = new Map();
     this.audit = new AuditLog(this.config.dataDir);
+
     /** @type {Map<string, {id: string, action: string, target: string, requester: string, approver: string, status: "pending"|"approved"|"rejected", ts: string}>} */
     this.approvals = new Map();
 
@@ -113,17 +121,38 @@ export class OrgService extends Service {
     }
 
     ctx.effect(() => {
-      void this.boot();
+      // 0.2.11: today's exit(1) for a damaged org-state.json was ACCIDENTAL — the
+      // bare `void this.boot()` produced an unhandled rejection that the host's
+      // process-level `installFailLoud` handler happened to catch. That made
+      // "refuse to start" an emergent property of the host, not a contract this
+      // plugin declares: if the host ever upgrades, or exempts the rejection, the
+      // failure mode would quietly revert to "keep running on an empty tree".
+      // Say it explicitly, and rethrow so the host fatal path still runs (it
+      // disposes the half-built fiber before exiting).
+      void this.boot().catch((error) => failLoud("[agent-org]", error, this.ctx.logger));
       return () => {};
     }, "agent-org: boot");
   }
 
+  /**
+   * Load the org tree (0.2.11).
+   *
+   * A damaged org-state.json now REJECTS this promise instead of yielding an
+   * empty tree (see OrgPersistence.load). Order matters: prove the backup root
+   * first, so an unresolvable backup path is a named config error rather than a
+   * failure discovered halfway through a later write.
+   */
   async boot() {
+    await ensureBackupRoot();
     this.state = await this.persistence.load();
     if (typeof this.state.rev !== "number") this.state.rev = 0;
     const syncCfg = await this.persistence.loadSyncConfig();
     if (syncCfg.roomId) this.config.syncRoomId = String(syncCfg.roomId);
     this.syncReady = true;
+    // G4: reaching the end of boot is the only claim that this node really came
+    // up, and the plugin is the only party allowed to make it. The watchdog just
+    // READS the marker, so a repaired machine restarts itself.
+    await clearRefusedMarker(this.config.dataDir);
   }
 
   /** @returns {{roomId?: string}} */
@@ -156,13 +185,17 @@ export class OrgService extends Service {
     try {
       const identity = await this.agentRoom?.gateway?.identity?.();
       const ownerAgentId = this.state.nodes.find((n) => n.kind === "company")?.leaderAgentId ?? "";
-      await this.agentRoom?.gateway?.sendChat?.(this.config.syncRoomId, {
-        text: encodeSnapshot(this.state, { by: identity?.agentId ?? "", ownerAgentId }),
-        human: false,
-      });
-    } catch {
-      // Sync is best-effort; a node that is offline simply misses a snapshot
-      // and catches up on the next broadcast.
+      // Verified write (0.2.10): a snapshot that silently vanished left a node
+      // permanently out of date with no trace of why.
+      await this.sendControlFrame(
+        encodeSnapshot(this.state, { by: identity?.agentId ?? "", ownerAgentId }),
+        { label: "snapshot:" + this.state.rev },
+      );
+    } catch (error) {
+      // Sync is best-effort by design: a node that is offline simply misses a
+      // snapshot and catches up on the next broadcast. sendControlFrame has
+      // already retried and logged, so only an unexpected throw lands here.
+      this.warnRateLimited("broadcast", `[agent-org] snapshot broadcast failed: ${String(error)}`);
     }
   }
 
@@ -171,97 +204,21 @@ export class OrgService extends Service {
     const text = message?.text;
     if (!this.config.syncRoomId || roomId !== this.config.syncRoomId) return;
 
-    // 1. exec result -> resolve the pending sender
+    // 1. exec result -> resolve the pending sender (interim 202 answers ignored)
     const result = decodeExecResult(text);
     if (result) {
-      const pending = this.pendingExec.get(result.id);
-      if (pending) {
-        this.pendingExec.delete(result.id);
-        clearTimeout(pending.timer);
-        pending.resolve(result);
-      }
+      this.execPlane.handleResult(result);
       return;
     }
 
     // 2. exec instruction -> execute only if targeted at this machine AND the
     //    sender is authorized (owner/lead). Receiving side must NOT trust the
     //    payload alone — any room member could otherwise RCE this node.
+    //    ExecPlane then guarantees: one real execution per id, and an ANSWER for
+    //    every delivery (cached result / still-executing 202 / fresh result).
     const instruction = decodeExec(text);
     if (instruction) {
-      const identity = await this.agentRoom?.gateway?.identity?.();
-      if (identity?.agentId !== instruction.targetAgentId) return; // not for me
-
-      // REPLAY GUARD. agent-org frames are plain room messages, so a reconnecting
-      // node re-syncs the tail of the room history and hands every frame to this
-      // handler again. Without this guard an instruction runs once per reconnect —
-      // and since each run replies with another room message, the history grows
-      // and the replay grows with it. On 2026-09-12 that reached 25,346 exec
-      // frames and a machine died in a ~90ms reconnect loop. One instruction must
-      // mean one execution, however many times it is delivered.
-      if (this.seenExecIds.has(instruction.id)) {
-        const replays = (this.replayCounts.get(instruction.id) ?? 0) + 1;
-        this.replayCounts.set(instruction.id, replays);
-        if (replays === 1) {
-          // First re-delivery is worth a line; the 1.26M that may follow are not.
-          void this.audit.append({
-            agentId: message?.from ?? "",
-            action: "exec",
-            target: instruction.targetAgentId + " :: " + instruction.command,
-            result: "skipped(replay)",
-          });
-        }
-        if (this.replayCounts.size > SEEN_EXEC_ID_LIMIT) {
-          const oldestReplay = this.replayCounts.keys().next().value;
-          if (oldestReplay !== undefined) this.replayCounts.delete(oldestReplay);
-        }
-        return;
-      }
-      this.seenExecIds.add(instruction.id);
-      if (this.seenExecIds.size > SEEN_EXEC_ID_LIMIT) {
-        // Bounded FIFO: Set preserves insertion order, so the oldest id is first.
-        const oldest = this.seenExecIds.values().next().value;
-        if (oldest !== undefined) this.seenExecIds.delete(oldest);
-      }
-
-      const sender = message?.from ?? "";
-      const senderRole = this.roleOf(sender);
-      const allowed = senderRole === "owner" || senderRole === "lead";
-      const reply = allowed
-        ? await (async () => {
-            const outcome = await runCommand(instruction.command, EXEC_TIMEOUT_MS);
-            return {
-              id: instruction.id,
-              by: identity.agentId,
-              ok: outcome.ok,
-              code: outcome.code,
-              stdout: outcome.stdout,
-              stderr: outcome.stderr,
-              timedOut: outcome.timedOut,
-              error: outcome.error,
-            };
-          })()
-        : {
-            id: instruction.id,
-            by: identity.agentId,
-            ok: false,
-            code: 403,
-            stdout: "",
-            stderr: "",
-            timedOut: false,
-            error: `exec rejected: sender ${sender} role=${senderRole} (仅 owner/lead 可下发)`,
-          };
-      void this.audit.append({
-        agentId: sender,
-        action: "exec",
-        target: instruction.targetAgentId + " :: " + instruction.command,
-        result: allowed ? "executed" : "rejected",
-      });
-      try {
-        await this.agentRoom?.gateway?.sendChat?.(this.config.syncRoomId, {
-          text: encodeExecResult(reply),
-          human: false,
-        });
-      } catch { /* best-effort */ }
+      await this.execPlane.handleInstruction(instruction, message);
       return;
     }
 
@@ -280,7 +237,65 @@ export class OrgService extends Service {
   }
 
   /**
+   * Send a control frame and VERIFY it was accepted (0.2.10).
+   *
+   * `gateway.sendChat` used to return null for a joined room, so a failed result
+   * write was indistinguishable from a successful one and the frame was lost
+   * with the sender still waiting. Now the status is checked, the write is
+   * retried with bounded exponential backoff, and an ultimate failure is logged
+   * (rate-limited) instead of swallowed.
+   *
+   * @param {string} text
+   * @param {{label?: string, roomId?: string}} [options]
+   */
+  async sendControlFrame(text, options = {}) {
+    const roomId = options.roomId ?? this.config.syncRoomId;
+    const label = options.label ?? "control-frame";
+    if (!roomId) return { ok: false, attempts: 0, queued: false, unknown: false, status: undefined, reason: "no_sync_room" };
+    const outcome = await sendWithRetry(
+      (frame) => {
+        const sent = this.agentRoom?.gateway?.sendChat?.(roomId, { text: frame, human: false });
+        return sent ?? null;
+      },
+      text,
+    );
+    if (!outcome.ok) {
+      this.warnRateLimited(
+        "delivery:" + label,
+        `[agent-org] failed to write ${label} to ${roomId} after ${outcome.attempts} attempt(s): ${outcome.reason ?? "unknown"}`,
+      );
+    } else if (outcome.unknown) {
+      this.warnRateLimited(
+        "unverified:" + label,
+        `[agent-org] ${label} write to ${roomId} returned no delivery status (agent-room < 0.1.34?) — acceptance unverified`,
+      );
+    } else if (outcome.queued) {
+      this.warnRateLimited(
+        "queuedframe:" + label,
+        `[agent-org] channel to ${roomId} was not open: ${label} queued by agent-room for replay`,
+      );
+    }
+    return outcome;
+  }
+
+  /** One warning per key per minute. */
+  warnRateLimited(key, message) {
+    const now = Date.now();
+    if (now - (this.warnAt.get(key) ?? 0) < WARN_WINDOW_MS) return;
+    this.warnAt.set(key, now);
+    try {
+      console.warn(message);
+    } catch {
+      /* logging must never throw */
+    }
+  }
+
+  /**
    * Send a remote exec instruction to a target machine and await its result.
+   *
+   * The role gate stays here (an OrgService concern); the idempotency key, the
+   * verified write and the controller-side waiter live in ExecPlane.
+   *
    * @param {string} targetAgentId
    * @param {string} command
    */
@@ -291,20 +306,7 @@ export class OrgService extends Service {
     if (callerRole !== "owner" && callerRole !== "lead") {
       throw new OrgError("exec_forbidden", `仅 owner/lead 可发起远程执行（当前 role=${callerRole}）`);
     }
-    const id = uuid();
-    const payload = { id, targetAgentId, command: String(command ?? ""), ts: nowIso() };
-    const resultPromise = new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this.pendingExec.delete(id);
-        resolve({ id, ok: false, code: null, stdout: "", stderr: "", timedOut: true, error: "exec timed out waiting for result" });
-      }, EXEC_WAIT_TIMEOUT_MS);
-      this.pendingExec.set(id, { resolve, timer });
-    });
-    await this.agentRoom.gateway.sendChat(this.config.syncRoomId, {
-      text: encodeExec(payload),
-      human: false,
-    });
-    return resultPromise;
+    return this.execPlane.sendExec(targetAgentId, command);
   }
 
   /**
@@ -559,18 +561,35 @@ export class OrgService extends Service {
   /**
    * @param {string} id
    * @param {{name?: string, leaderAgentId?: string|null, agentId?: string}} patch
+   * @param {string} [actorAgentId] the caller's own agentId. REQUIRED for a rename
+   *   (0.2.12): an empty actor is denied, so a call path that forgets to identify
+   *   its caller cannot rename a node.
    */
-  async updateNode(id, patch) {
+  async updateNode(id, patch, actorAgentId = "") {
     const node = this.requireNode(id);
     if (patch.name !== undefined) {
       const name = String(patch.name ?? "").trim();
       if (!name) throw new OrgError("name_required", "名称不能为空");
+      // G1 (0.2.11): the same content gate as the room nickname. An org node name
+      // is a display identity read by every machine's tree, and the damage classes
+      // here are the ones actually observed in the field.
+      const problem = nicknameProblem(name);
+      if (problem) throw new OrgError("name_invalid", `名称不可用：${problem}`);
+      // 0.2.12: authorization. Before this release the name was written with no
+      // permission check at all and the route carried no caller identity, so any
+      // caller reaching port 3080 could rename ANY node — the card-01 security
+      // gap. The actor is now the caller's own agentId, checked here, in the one
+      // place a name is written.
+      this.assertMayRename(node, actorAgentId);
       node.name = name;
     }
     if (patch.agentId !== undefined) {
       if (node.kind !== "member") throw new OrgError("invalid_field", "只有成员节点可以设置 agentId");
       const agentId = String(patch.agentId ?? "").trim();
       if (!agentId) throw new OrgError("agent_required", "成员 agentId 不能为空");
+      // G1: a member node's agentId is the ONLY link from the org tree to a
+      // machine. A typo or a placeholder here silently orphans that member.
+      if (!isUuidShaped(agentId)) throw new OrgError("agent_invalid", `成员 agentId 不是 UUID：${agentId}`);
       if (this.state.nodes.some((n) => n.id !== id && n.kind === "member" && n.agentId === agentId)) {
         throw new OrgError("member_exists", `成员 ${agentId} 已存在于组织树`);
       }
@@ -582,6 +601,85 @@ export class OrgService extends Service {
     node.updatedAt = nowIso();
     await this.save();
     return node;
+  }
+
+  /**
+   * Refuse a rename this actor is not authorised to perform (0.2.12).
+   *
+   * The decision comes from `canRenameNode` (permission.js): renaming your OWN
+   * member node is L1, renaming anything else is L2 (the org owner may, everyone
+   * else needs approval). Both outcomes are audited — a refused cross-machine
+   * rename must leave a trace, because the card's failure mode was a rename that
+   * silently reappeared in its old value.
+   *
+   * @param {{id: string, kind?: string, agentId?: string}} node
+   * @param {string} actorAgentId
+   */
+  assertMayRename(node, actorAgentId) {
+    const decision = canRenameNode(this.state, actorAgentId, node);
+    if (!decision.allowed) {
+      void this.audit.append({
+        agentId: actorAgentId || "(unknown)",
+        action: decision.action,
+        target: node.id,
+        result: "denied",
+      });
+      const why = decision.needsApproval
+        ? `需要审批（${decision.action}，审批人 ${decision.approver ?? "无"}）`
+        : `角色 ${decision.role} 无权执行 ${decision.action}`;
+      throw new OrgError("rename_denied", `无权改名：${why}`);
+    }
+    void this.audit.append({ agentId: actorAgentId, action: decision.action, target: node.id, result: "allowed" });
+    return decision;
+  }
+
+  /**
+   * Rename ONE member node, addressed by agentId (0.2.12).
+   *
+   * This is the org-side half of card-01's three-store rename: dsh-agent-room
+   * calls it in-process through `ctx.get("agentOrg")` right after it updates the
+   * nickname, so the org tree node name follows immediately instead of never.
+   *
+   * It goes through `updateNode` on purpose: `save()` is what bumps `rev` and
+   * broadcasts the snapshot, and a rename that only wrote the file would leave
+   * every other machine on the old name (card-01 §4.2). The permission gate is
+   * the same one every other rename uses, with the target agent's own agentId as
+   * the actor — so a member may always correct their OWN node.
+   *
+   * @param {string} agentId the machine whose node is renamed (must equal `nickname`'s owner)
+   * @param {string} nickname the new display name
+   */
+  async renameSelfByAgentId(agentId, nickname) {
+    const target = String(agentId ?? "").trim();
+    if (!target) throw new OrgError("agent_required", "agentId 不能为空");
+    const node = this.state.nodes.find((n) => n.kind === "member" && n.agentId === target);
+    if (!node) throw new OrgError("member_not_found", `组织树里没有 agentId=${target} 的成员节点`);
+    const updated = await this.updateNode(node.id, { name: nickname }, target);
+    return { nodeId: updated.id, name: updated.name, rev: this.state.rev };
+  }
+
+  /**
+   * This machine's own agentId, WITHOUT ever minting one (0.2.12).
+   *
+   * The rename route needs to know WHO is calling. `gateway.identity()` is not a
+   * getter — it mints a fresh identity (and writes it) when the cache is empty —
+   * so it must not be the first choice on an authorization path: an authorization
+   * check must never create the thing it is authorizing.
+   *
+   * Order: the room plugin's synchronous, non-minting `getIdentity()`; if that
+   * accessor exists but the cache is cold (boot unfinished) return "" so the
+   * permission gate denies (fail closed); only when the accessor is absent (an
+   * older/mismatched room plugin) fall back to `gateway.identity()`.
+   */
+  async localAgentId() {
+    const room = this.agentRoom;
+    const getIdentity = room?.roomService?.getIdentity;
+    if (typeof getIdentity === "function") {
+      const cached = getIdentity.call(room.roomService);
+      return cached?.agentId ?? "";
+    }
+    const identity = await room?.gateway?.identity?.();
+    return identity?.agentId ?? "";
   }
 
   /**

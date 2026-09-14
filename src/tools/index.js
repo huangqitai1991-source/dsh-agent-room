@@ -116,7 +116,7 @@ export function apply(ctx) {
   register(
     defineTool({
       name: "org_update_node",
-      description: "Update an org node's name, member agentId, or clear/update leader agentId. Pass only fields to change.",
+      description: "Update an org node's name, member agentId, or clear/update leader agentId. Pass only fields to change. Renaming is authorized against this machine's own identity (0.2.12): own member node = L1, any other node = L2 (org owner may, others need approval).",
       parameters: {
         id: { type: "string", required: true, description: "Node id." },
         name: { type: "string", description: "New display name." },
@@ -125,11 +125,15 @@ export function apply(ctx) {
       },
       output: { schema: okSchema({ node: nodeRef() }, ["node"]), render: textRender },
       async execute(args) {
+        // 0.2.12: identify the caller. A rename is authorized against this
+        // machine's own agentId (an org-update tool runs in this node's process),
+        // and `localAgentId()` never mints an identity.
+        const actor = await org.localAgentId();
         const node = await org.updateNode(args.id, {
           name: args.name,
           agentId: args.agentId,
           leaderAgentId: args.leaderAgentId === undefined ? undefined : args.leaderAgentId,
-        });
+        }, actor);
         return { node };
       },
     }),

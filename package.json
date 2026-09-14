@@ -1,6 +1,6 @@
 {
   "name": "dsh-agent-org",
-  "version": "0.2.9",
+  "version": "0.2.12",
   "description": "Company/org management for DSH: org tree, member assignment, and hierarchical task visibility on top of dsh-agent-room.",
   "type": "module",
   "main": "./src/host/index.js",
@@ -11,6 +11,7 @@
   },
   "files": [
     "src",
+    "docs",
     "cordis.patch.yml",
     "README.md",
     "README.zh-CN.md"
@@ -24,7 +25,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "peerDependencies": {
-    "dsh-agent-room": ">=0.1.4"
+    "dsh-agent-room": ">=0.1.34"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

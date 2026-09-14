@@ -122,12 +122,17 @@ export function createRouter(service) {
       const updateMatch = /^\/agent-org-api\/nodes\/([^/]+)\/update$/.exec(path);
       if (method === "POST" && updateMatch) {
         const body = await readJson(request);
+        // 0.2.12: the rename is authorized against THIS machine's identity, which
+        // is the only caller identity an unauthenticated same-origin route can
+        // honestly claim. `localAgentId()` never mints an identity (see
+        // OrgService.localAgentId), and a cold cache yields "" -> denied.
+        const actor = await service.localAgentId();
         const node = await service.updateNode(decodeURIComponent(updateMatch[1]), {
           name: body.name !== undefined ? String(body.name) : undefined,
           agentId: body.agentId !== undefined ? String(body.agentId) : undefined,
           leaderAgentId: body.leaderAgentId !== undefined ? body.leaderAgentId : undefined,
-        });
-        return sendJson(response, 200, { ok: true, data: { node } });
+        }, actor);
+        return sendJson(response, 200, { ok: true, data: { node, renamedBy: actor } });
       }
 
       const leaderMatch = /^\/agent-org-api\/nodes\/([^/]+)\/leader$/.exec(path);

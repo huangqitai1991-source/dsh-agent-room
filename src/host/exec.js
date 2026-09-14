@@ -119,3 +119,31 @@ export function decodeExecResult(text) {
     return null;
   }
 }
+
+/**
+ * The answer a duplicate delivery of an instruction gets while the FIRST
+ * delivery is still running (0.2.10).
+ *
+ * HTTP-ish 202 semantics in the result payload: the work is accepted and in
+ * progress. It is neither a success nor an error, and the controller must keep
+ * waiting for the real result instead of resolving with this interim body — see
+ * the `pending` branch in OrgService.onChat.
+ *
+ * @param {string} id
+ * @param {string} by agentId of the executing node
+ */
+export function stillExecutingResult(id, by) {
+  return {
+    id,
+    by,
+    ok: false,
+    pending: true,
+    status: 202,
+    code: null,
+    stdout: "",
+    stderr: "",
+    timedOut: false,
+    note: "still executing",
+  };
+}
+
