@@ -187,6 +187,44 @@ export class Persistence {
     await this.writeJsonAtomic(join(this.root, "joined.json"), records);
   }
 
+  /* ---------------------------- listening intent ------------------------ */
+
+  /**
+   * The "this node LISTENS to that room" intent (0.1.42).
+   *
+   * Until 0.1.42 `listeningRooms` was a bare in-memory `Set`, so every process
+   * restart — an upgrade, a crash, a manual restart, all identical to this
+   * state — silently reset it and the machine stopped waking for room messages
+   * until a human re-enabled it room by room. The upgrade script compensated
+   * with a fail-soft POST afterwards, which is why one machine came back
+   * listening and another (小麦, after 0.1.40) read `listening=false` and had to
+   * be rescued by hand.
+   *
+   * Granularity is the existing one: the file lives in this profile's dataDir,
+   * so a record means (profile × roomId), exactly like joined.json.
+   *
+   * BACKWARD COMPATIBILITY is part of the contract: a file that does not exist,
+   * does not parse, or does not carry `rooms` yields NO remembered rooms
+   * (treated as false) and never throws — this is a preference file, not a
+   * config that can be "damaged", so it must not be able to fail a boot.
+   */
+  async loadListening(): Promise<string[]> {
+    let data: unknown;
+    try {
+      data = await this.readJson<unknown>(join(this.root, "listening.json"));
+    } catch {
+      // Unreadable file: forget the intent rather than fail the boot.
+      return [];
+    }
+    const rooms = (data as { rooms?: unknown } | null)?.rooms;
+    if (!Array.isArray(rooms)) return [];
+    return rooms.filter((roomId): roomId is string => typeof roomId === "string" && roomId.length > 0);
+  }
+
+  async saveListening(roomIds: string[]): Promise<void> {
+    await this.writeJsonAtomic(join(this.root, "listening.json"), { rooms: [...roomIds] });
+  }
+
   /* ------------------------------ rooms -------------------------------- */
 
   async loadPersistentRooms(): Promise<Room[]> {
