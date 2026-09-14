@@ -310,7 +310,7 @@ export class PeerServer {
       }
       if (req.method === "POST" && url.pathname === "/api/join") {
         const body = (await readJsonBody(req)) as JoinRequest;
-        return this.json(res, 200, await this.handleJoin(body));
+        return this.json(res, 200, await this.handleJoin(body, req.socket.remoteAddress ?? undefined));
       }
       return this.json(res, 404, { ok: false, error: "not-found" });
     } catch (err) {
@@ -333,13 +333,16 @@ export class PeerServer {
     };
   }
 
-  private async handleJoin(body: JoinRequest): Promise<JoinResponse> {
+  private async handleJoin(body: JoinRequest, remoteAddress?: string): Promise<JoinResponse> {
     if (!body?.agent?.agentId) return { ok: false, error: "room-not-found" };
     const identity: AgentIdentity = body.agent;
     const roomId = body.roomId ?? this.service.listOwnedRooms()[0]?.roomId;
     if (!roomId) return { ok: false, error: "room-not-found" };
     try {
-      const result = this.service.joinOwnedRoom(roomId, identity, { password: body.password });
+      // The member's OBSERVED address travels with the join (D-21): a re-join from
+      // a machine whose address changed replaces the stored one in place instead of
+      // appending a second member record.
+      const result = this.service.joinOwnedRoom(roomId, identity, { password: body.password, address: remoteAddress });
       return {
         ok: true,
         token: result.token,
@@ -569,7 +572,13 @@ export class PeerServer {
         return;
       }
       try {
-        const result = this.service.joinOwnedRoom(roomId, payload.agent, { password: payload.password });
+        const result = this.service.joinOwnedRoom(roomId, payload.agent, {
+          password: payload.password,
+          // Over a relay the transport the owner observes IS the relay; recording
+          // that is honest ("last seen via") and keeps the field meaningful for a
+          // member the owner can never see directly.
+          address: this.relayAddress,
+        });
         const snapshot = await this.snapshotFor(roomId);
         respond({ type: "relay.joined", payload: { ok: true, token: result.token, ticket: this.service.issueRelayTicket(roomId, payload.agent.agentId), snapshot } });
       } catch (err) {
@@ -583,6 +592,12 @@ export class PeerServer {
       respond(frameError("not-member"));
       return;
     }
+    // D-20: this method is the ONE funnel every member-originated frame goes
+    // through (direct socket at handleFrame, relay bridge at connectRelay), so a
+    // single touch here is what makes `member.lastSeenAt` mean "we heard from this
+    // colleague at T" for any transport. It is deliberately not `joinedAt`
+    // (admission) and not the org tree's `updatedAt` (an edit stamp).
+    this.service.touchMember(roomId, agentId);
     try {
       switch (frame.type) {
         case "hello":
@@ -591,6 +606,17 @@ export class PeerServer {
           const { text, replyTo, mentions, human } = frame.payload;
           if (text.length > MAX_MESSAGE_LENGTH) throw new Error("message-too-long");
           await this.service.addChatMessage(roomId, identity, { text, replyTo, mentions, human });
+          // D-20 `lastExecAt`/`lastExecOk`: the exec channel is carried as a room
+          // chat control frame (agent-org EXEC_RESULT_PREFIX, `[org:exec:result]`
+          // + JSON). Recording that the member ANSWERED an exec — and whether it
+          // was ok — is the difference between "the machine is up" and "the plugin
+          // can actually run commands", which is the distinction the field
+          // investigation could not make (3 exec timeouts, then a human answer).
+          // Unparseable body: stamp the time only and leave `lastExecOk` at
+          // whatever it was — "unknown" must never be reported as "false".
+          const execOk = execResultOk(text);
+          if (execOk !== undefined) this.service.touchMember(roomId, agentId, { execOk });
+          else if (/^\[org:exec:result\]/.test(text)) this.service.touchMember(roomId, agentId);
           return;
         }
         case "task.create":
@@ -794,6 +820,31 @@ export class PeerServer {
 
 /** Interface names that indicate a virtual adapter, never a real LAN. */
 const VIRTUAL_INTERFACE = /virtual|vmware|virtualbox|vbox|hyper-v|hyperv|memu|nox|leidian|tailscale|wireguard|zerotier|docker|wsl|vethernet|utun|\bppp\b|loopback/i;
+
+/**
+ * `ok` of an `[org:exec:result]` control frame, or undefined when the frame is
+ * not an exec result / its body cannot be read (D-20).
+ *
+ * The exec channel is a room chat line (`agent-org/src/host/exec.js:11,105` —
+ * `"[org:exec:result]" + JSON`), which is why the owner can observe it at all. The
+ * prefix is matched as a literal, without importing agent-org: the two plugins are
+ * separate packages, and the room owner must keep working (with the field simply
+ * absent) when an older or newer peer formats the body differently. A body that
+ * does not parse yields `undefined` so the caller stamps `lastExecAt` without
+ * inventing a `lastExecOk` value.
+ */
+export function execResultOk(text: unknown): boolean | undefined {
+  if (typeof text !== "string" || !text.startsWith("[org:exec:result]")) return undefined;
+  try {
+    const payload = JSON.parse(text.slice("[org:exec:result]".length)) as { ok?: unknown; pending?: unknown };
+    // A 202 "still executing" interim answer is NOT a finished exec: stamping it
+    // would report an in-flight command as the member's last result.
+    if (payload && payload.pending === true) return undefined;
+    return typeof payload?.ok === "boolean" ? payload.ok : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** All non-internal IPv4 addresses on this node, with their interface name. */
 function lanAddressCandidates(): Array<{ address: string; name: string }> {

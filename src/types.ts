@@ -51,6 +51,26 @@ export interface Member {
   manualCapabilities?: string[];
   /** Workflow roles the member declares (e.g. executor, reviewer). */
   roles?: RoleKey[];
+  /**
+   * LIVENESS (D-20, 0.1.42) — the last time the room owner received a frame from
+   * this member (`touchMember`, called from the single member-frame funnel in
+   * peer-server.ts). Deliberately NOT `joinedAt`: an admission timestamp cannot
+   * distinguish "off duty" from "plugin wedged", which is what cost one
+   * investigation three exec timeouts (45s/25s/25s) and a human answer.
+   *
+   * ISO-8601 UTC, same shape as every other timestamp here. Absent for records
+   * written by an older node (and for members that have not spoken since the
+   * upgrade): a reader MUST treat "missing" as "unknown", never as "offline".
+   */
+  lastSeenAt?: string;
+  /** Address this member was last seen from (direct host:port or relay URL).
+   *  Also the field a re-join updates in place — see D-21. */
+  lastSeenAddress?: string;
+  /** Last exec result this member reported through the room (`[org:exec:result]`). */
+  lastExecAt?: string;
+  /** Whether that last exec succeeded (`ok`), so "reachable" is distinguishable
+   *  from "reachable and able to run commands". */
+  lastExecOk?: boolean;
 }
 
 export type TaskStatus = "todo" | "doing" | "review" | "done" | "rejected";
