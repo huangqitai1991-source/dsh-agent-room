@@ -37,6 +37,17 @@ export interface RoomClientEvents {
   task: (task: Task) => void;
   system: (event: SystemEvent) => void;
   connection: (state: "connecting" | "open" | "reconnecting" | "closed") => void;
+  /**
+   * A RE-join was answered and refused by the owner (D-18, 0.1.42).
+   *
+   * Terminal by construction: `scheduleReconnect` stops retrying on a
+   * `join rejected:` answer, so without this event the local joined.json record
+   * simply stayed behind — nothing told the service, and it was only cleaned at
+   * the next boot or connection-mode switch. The owner's answer IS the join
+   * result the cleanup rule is supposed to be decided by, so the service must
+   * hear it while it is still fresh.
+   */
+  joinRejected: (roomId: string, message: string) => void;
 }
 
 /** Public shape of the convergence state (browser panel + logs). */
@@ -451,7 +462,16 @@ export class RoomClient extends EventEmitter {
         const message = error instanceof Error ? error.message : String(error);
         if (message.startsWith("join rejected")) {
           // Terminal: room is gone/closed/full — no point retrying.
+          //
+          // TERMINAL MUST MEAN TERMINAL (D-18): this branch used to return without
+          // touching `left`, so the socket of the failed attempt closed a moment
+          // later and its close handler called `scheduleReconnect()` again — a new
+          // attempt one second later, rejected again, forever. The service side now
+          // drops the record, but a client that keeps re-dialling a dead room is
+          // exactly the "retries a dead room forever" defect this release closes.
           this.setConnection("closed");
+          this.emit("joinRejected", this.roomId ?? this.roomIdHint ?? "", message);
+          this.stopRetrying();
           return;
         }
         this.setConnection("reconnecting");
@@ -978,6 +998,32 @@ export class RoomClient extends EventEmitter {
     if (this.socket?.readyState === WebSocket.OPEN) {
       this.sendFrame({ type: "room.leave", payload: {} });
       this.socket.close(1000, "left");
+    }
+    this.socket = null;
+    this.setConnection("closed");
+  }
+
+  /**
+   * Stop for good after a TERMINAL answer from the owner (D-18).
+   *
+   * `left` is the flag every retry path already checks (`scheduleReconnect`,
+   * `openSocket`, the sync loop, the heartbeat), so setting it is what makes
+   * "terminal" actually terminal: without it the close handler of the failed socket
+   * re-armed another attempt, and a room that answers `join rejected` was re-dialled
+   * once a second for as long as the process lived. Deliberately NOT `leave()`: a
+   * terminated client must not send a `room.leave` frame to an owner that has
+   * already refused it.
+   */
+  stopRetrying(): void {
+    this.left = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.stopSyncLoop();
+    this.clearHeartbeat();
+    try {
+      this.socket?.close(1000, "rejected");
+    } catch {
+      /* ignore */
     }
     this.socket = null;
     this.setConnection("closed");

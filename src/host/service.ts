@@ -181,6 +181,8 @@ export class AgentRoomService extends Service {
   );
   /** Rate-limited warning bookkeeping: key -> last time it was logged. */
   private readonly warnAt = new Map<string, number>();
+  /** Pending bounded-backoff rejoin timers (D-18: tracked so disposal can cancel). */
+  private readonly rejoinTimers = new Set<NodeJS.Timeout>();
   /** Rooms where the local agent is currently "thinking" (activate-chat one-shot
    *  in flight); one thinking per room, cleared when our own reply lands. */
   private readonly activateThinkingRooms = new Set<string>();
@@ -290,7 +292,13 @@ export class AgentRoomService extends Service {
       // disposes the half-built fiber first — strictly better than process.exit.
       void this.boot().catch((error) => failLoud("[agent-room]", error, this.ctx.logger));
       return () => {
-        /* boot is fire-and-forget */
+        // Disposal must stop the retry loop (D-18): the bounded-backoff rejoin
+        // timers are NOT unref'd, so a disposed node kept dialling — and a test
+        // process kept waiting ~45s for them to expire.
+        this.stopRejoinRetries();
+        for (const timer of [this.profileTimer, this.listenTimer]) {
+          try { if (timer) clearInterval(timer); } catch { /* ignore */ }
+        }
       };
     }, "agent-room: boot");
   }
@@ -1126,6 +1134,20 @@ export class AgentRoomService extends Service {
   }
 
   /**
+   * Cancel every pending bounded-backoff rejoin (D-18).
+   *
+   * Called on disposal and available to tests: a retry timer that outlives the
+   * service keeps dialling a room nobody owns any more, and it keeps the event loop
+   * alive so a process cannot exit.
+   */
+  stopRejoinRetries(): void {
+    for (const timer of this.rejoinTimers) {
+      try { clearTimeout(timer); } catch { /* ignore */ }
+    }
+    this.rejoinTimers.clear();
+  }
+
+  /**
    * Reconnect to every room recorded in joined.json (idempotent).
    *
    * Records are pruned only for reasons that are actually knowable:
@@ -1211,7 +1233,11 @@ export class AgentRoomService extends Service {
         this.ctx.logger?.debug?.("[agent-room] auto-rejoin retry %d for %s: %s", attempt + 1, roomId, message);
       }
       if (attempt + 1 < maxAttempts) {
-        setTimeout(() => void this.rejoinWithRetry(roomId, address, attempt + 1), REJOIN_BACKOFF_MS * (attempt + 1));
+        const timer = setTimeout(() => {
+          this.rejoinTimers.delete(timer);
+          void this.rejoinWithRetry(roomId, address, attempt + 1);
+        }, REJOIN_BACKOFF_MS * (attempt + 1));
+        this.rejoinTimers.add(timer);
         return;
       }
       if (kind === "rejected") {
@@ -1524,6 +1550,32 @@ export class AgentRoomService extends Service {
         // A fresh snapshot means the handshake finished — the socket is open even
         // when the "connection" event raced ahead of us.
         this.flushOutQueue(roomId, "snapshot");
+      });
+      // D-18 (runtime half, 0.1.42): the owner ANSWERED and refused the re-join.
+      // That is the join result the cleanup rule decides on, so the local record
+      // goes now — previously the client gave up silently and joined.json kept a
+      // dead room until the next boot or a connection-mode switch. Only a client
+      // that HAD connected can emit this (a never-connected one is an orphan and
+      // never schedules a reconnect), so the record being dropped is one this node
+      // really was a member of, and the refusal means membership is gone or the
+      // room is full/closed — nothing a retry can restore.
+      client.on("joinRejected", (rejectedRoomId, message) => {
+        const target = rejectedRoomId || roomId;
+        const live = this.clients.get(target);
+        if (live === client) {
+          this.clients.delete(target);
+          this.connInfo.delete(target);
+        }
+        // The client stopped its own retry loop (RoomClient.stopRetrying); destroy
+        // it here too so nothing of a permanently unusable room stays attached.
+        try {
+          client.destroy();
+        } catch {
+          /* best effort */
+        }
+        this.outbound.drop(target);
+        void this.forgetJoinedRoom(target, `re-join refused by the owner: ${message}`)
+          .then(() => this.emitBrowser({ kind: "state" }));
       });
       this.connInfo.set(roomId, { state: client.connState, viaRelay: client.viaRelay, address: client.address });
       this.clients.set(roomId, client);
