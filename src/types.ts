@@ -135,6 +135,15 @@ export interface ChatMessage {
   mentions?: string[];
   /** True when a human took over the sender's seat. */
   human?: boolean;
+  /**
+   * True for a locally appended message that the owner has not confirmed yet
+   * (0.1.34). Such a message carries a NEGATIVE seq and only exists in the local
+   * projection, so a sender sees its own message immediately even when the frame
+   * had to be queued.
+   */
+  pending?: boolean;
+  /** Local tracking id for a pending message, cleared once the real seq lands. */
+  localId?: string;
 }
 
 export interface SystemEvent {
@@ -148,6 +157,22 @@ export interface SystemEvent {
 export interface RoomSnapshot {
   room: Room;
   recentMessages: ChatMessage[];
+  /**
+   * Owner's highest assigned seq at snapshot time, control frames INCLUDED
+   * (0.1.35). This is the raw "maxSeq" of the owner's store.
+   */
+  latestSeq?: number;
+  /**
+   * Owner's highest seq that the READ VIEW can actually reach, i.e. the newest
+   * message that is not a control frame (0.1.35).
+   *
+   * This is the convergence target: a member's visible max seq can only ever
+   * equal `latestChatSeq`, never `latestSeq`, because control frames (`[org:`)
+   * are filtered out of the read view by design.
+   */
+  latestChatSeq?: number;
+  /** Owner sync capability marker; 1 = supports chat.fetch / chat.stat (0.1.35). */
+  syncVersion?: number;
 }
 
 /** A record of a room this node joined or created (for the "recent rooms" list). */

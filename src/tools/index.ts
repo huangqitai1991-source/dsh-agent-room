@@ -146,10 +146,29 @@ export function apply(ctx: Context & ToolContext): void {
         text: { type: "string", required: true, description: "Message text." },
         mentions: { type: "array", description: "agentIds or nicknames to mention." },
       },
-      output: { schema: okSchema({ seq: { type: "number" } }), render: textRender },
+      output: { schema: okSchema({ seq: { type: "number" }, sent: { type: "boolean" }, acceptedByLocalHub: { type: "boolean" }, confirmedByOwner: { type: "boolean" }, confirmedSeq: { type: "number" }, confirmNote: { type: "string" }, delivered: { type: "boolean" }, queued: { type: "boolean" }, reason: { type: "string" } }), render: textRender },
       async execute(args) {
-        const message = await gateway.sendChat(args.roomId, { text: args.text, mentions: args.mentions as string[] | undefined });
-        return { seq: message?.seq ?? null, sent: true };
+        const result = await gateway.sendChat(args.roomId, { text: args.text, mentions: args.mentions as string[] | undefined });
+        // Owned room -> authoritative message with a real seq. Joined room ->
+        // delivery status: the agent must be able to see that its frame was queued
+        // or dropped instead of assuming the send worked (0.1.34), and as of
+        // 0.1.35 it can also see whether the OWNER confirmed the message.
+        // `delivered` is a deprecated alias of `acceptedByLocalHub`; read the two
+        // explicit fields instead — "accepted" is not "arrived".
+        if (result && "delivered" in result) {
+          return {
+            seq: result.confirmedSeq ?? null,
+            sent: result.acceptedByLocalHub,
+            acceptedByLocalHub: result.acceptedByLocalHub,
+            confirmedByOwner: result.confirmedByOwner,
+            confirmedSeq: result.confirmedSeq ?? null,
+            confirmNote: result.confirmNote,
+            delivered: result.delivered,
+            queued: result.queued,
+            reason: result.reason,
+          };
+        }
+        return { seq: result?.seq ?? null, sent: true, acceptedByLocalHub: true, confirmedByOwner: true, confirmedSeq: result?.seq ?? null, confirmNote: "owner-confirmed", delivered: true, queued: false };
       },
     }),
   );
@@ -423,6 +442,45 @@ export function apply(ctx: Context & ToolContext): void {
       async execute(args) {
         const task = await gateway.taskStatus(args.roomId, args.taskId, args.status === "doing" ? "doing" : "todo");
         return { task: { taskId: task.taskId, status: task.status } };
+      },
+    }),
+  );
+
+  register(
+    defineTool({
+      name: "agent_rename_self",
+      description:
+        "Rename THIS node (the one supported rename entry point). One call converges all three stores: this machine's identity.json, the room members' nickname pushed to every joined room owner immediately (no wait for the 15s profile timer), and the agent-org org-tree node name. Applies to the running process — no restart. A name containing U+FFFD, consecutive '?', the unfilled placeholder \"NAME\", or only whitespace is rejected and NOTHING is changed. The org-tree half is reported explicitly: if agent-org is unavailable or refuses (a non-owner renaming another node), the result says so instead of silently leaving the tree behind.",
+      parameters: {
+        nickname: { type: "string", required: true, description: "The new display name for this node." },
+      },
+      output: {
+        schema: okSchema(
+          {
+            rename: {
+              type: "object",
+              properties: {
+                agentId: { type: "string" },
+                previousNickname: { type: "string" },
+                nickname: { type: "string" },
+                changed: { type: "boolean" },
+                identityFile: { type: "string" },
+                profileFanout: { type: "number" },
+                ownedRoomMembers: { type: "number" },
+                nicknameConflicts: { type: "array" },
+                org: { type: "object" },
+              },
+              required: ["agentId", "nickname", "changed", "identityFile", "profileFanout", "ownedRoomMembers", "org"],
+              additionalProperties: false,
+            },
+          },
+          ["rename"],
+        ),
+        render: textRender,
+      },
+      async execute(args) {
+        const rename = await gateway.renameSelf(args.nickname);
+        return { rename };
       },
     }),
   );

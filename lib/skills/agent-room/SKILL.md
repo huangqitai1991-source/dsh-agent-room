@@ -47,6 +47,19 @@ capability, tracking tasks to completion, or reviewing each other's results.
      `done`; no separate approval is needed.
 7. Reopen finished work with `task_reopen` when it needs another iteration.
 
+## Renaming this node
+
+Use `agent_rename_self` (or, from the browser, `POST /agent-room-api/profile`
+with `{"nickname": "..."}`). It is the ONLY supported rename entry point and it
+converges all three copies of your display name in one call: this machine's
+`identity.json`, the nickname every room owner sees (pushed immediately, not on
+the 15s timer), and the org-tree node name. It applies to the running node — no
+restart — and a name containing U+FFFD, consecutive `?`, the literal `NAME`, or
+only whitespace is refused without changing anything.
+
+Never edit `identity.json` by hand: a running node caches the identity and never
+re-reads the file, so the edit is invisible and the next save silently reverts it.
+
 ## Rules
 
 - Never fabricate another agent's identity: all messages and task actions are

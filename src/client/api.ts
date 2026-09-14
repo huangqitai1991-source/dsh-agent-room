@@ -57,6 +57,29 @@ export interface ApiBridge {
   address?: string;
 }
 
+/**
+ * Convergence state of a JOINED room (0.1.35).
+ *
+ * `latestSeq` on the room is the owner-reported target; `localLatestSeq` is what
+ * this node actually holds. While the two differ the mirror is still catching up,
+ * and gaps/requests show how it is doing that rather than pretending to be whole.
+ */
+export interface ApiRoomSync {
+  ownerLatestSeq: number;
+  ownerLatestChatSeq: number;
+  localLatestSeq: number;
+  lag: number;
+  gaps: number;
+  settled: number;
+  inflight: number;
+  requestsSent: number;
+  messagesAdded: number;
+  duplicatesSkipped: number;
+  failures: number;
+  reason: string;
+  converged: boolean;
+}
+
 export interface ApiRoom {
   roomId: string;
   title: string;
@@ -76,7 +99,16 @@ export interface ApiRoom {
   activateThinking?: boolean;
   /** True while the local agent is LISTENING to this room (auto-wake). */
   listening?: boolean;
+  /**
+   * Newest seq this room's read view can reach. For an owned room it is the
+   * owner's own store; for a joined room it is the OWNER-reported value (0.1.35),
+   * so a member that is behind no longer reports its own lagging mirror as truth.
+   */
   latestSeq?: number;
+  /** Highest confirmed seq this node actually holds (joined rooms). */
+  localLatestSeq?: number;
+  /** Convergence diagnostics for a joined room. */
+  sync?: ApiRoomSync;
   bridge?: ApiBridge;
 }
 
@@ -95,6 +127,22 @@ export interface RoomState {
   node?: { hostname: string; addresses?: string[] };
   relay?: { address?: string; configured: boolean };
   discovered?: ApiDiscoveredRoom[];
+  /**
+   * Delivery-level dedupe counters (0.1.39): how many inbound chat frames were
+   * dropped as repeats of an already-processed `(roomId, seq)`, how many ring
+   * entries were evicted to stay bounded, and whether the room cap ever reset the
+   * ring. A rising `evicted` together with repeat deliveries means the ring is
+   * too small; `skipped` alone cannot say that.
+   */
+  dedupe?: {
+    rooms: number;
+    tracked: number;
+    skipped: number;
+    evicted: number;
+    roomResets: number;
+    maxSeqsPerRoom: number;
+    maxRooms: number;
+  };
   rooms: ApiRoom[];
 }
 
@@ -164,6 +212,26 @@ export const listeningApi = (roomId: string, on: boolean) =>
 export const relayConfigApi = {
   get: () => api<{ address?: string; configured: boolean }>("/agent-room-api/relay-config"),
   set: (relay?: string) => api<{ relay: string | null }>("/agent-room-api/relay-config", { relay }),
+};
+
+/** Result of a 中继 ⇄ 局域网 switch: which rejoined rooms worked and why not. */
+export interface ApiModeResult {
+  mode: "lan" | "relay";
+  relay?: string | null;
+  addresses: string[];
+  /** `cleaned: true` marks a stale record (room closed/absent) that was pruned —
+   *  it is not a failure, so it must not be rendered as one. */
+  rooms: Array<{ roomId: string; title: string; ok: boolean; cleaned?: boolean; error?: string }>;
+}
+
+/**
+ * One-click connection-mode switch. The host changes relay-config AND re-joins
+ * every joined room with addresses matching the new mode in a single call, so
+ * rooms can never end up split across the relay and direct LAN.
+ */
+export const modeApi = {
+  set: (mode: "lan" | "relay", address?: string) =>
+    api<ApiModeResult>("/agent-room-api/mode", { mode, address }),
 };
 
 /**

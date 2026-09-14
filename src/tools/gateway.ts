@@ -16,6 +16,10 @@ import type {
   TaskHandoff,
 } from "../types.js";
 import type { CreateRoomInput } from "../host/room-service.js";
+import type { ChatDeliveryStatus } from "../host/outbound.js";
+
+/** Delivery status of a message sent to a JOINED room (see host/outbound.ts). */
+export type { ChatDeliveryStatus };
 
 export interface TaskInput {
   title: string;
@@ -28,8 +32,57 @@ export interface TaskInput {
   judgeMode?: "controller" | "auto";
 }
 
+/**
+ * The outcome of the ONE supported rename entry point (0.1.40).
+ *
+ * Reported per store, because card-01's whole point is that three copies of a
+ * display name exist and used to diverge silently:
+ *   A  this machine's `identity.json`        -> written by the same call
+ *   B  the room members' view                -> `profileFanout` (joined rooms,
+ *      pushed immediately) + `ownedRoomMembers` (rooms this node owns, updated
+ *      in its own member list)
+ *   C  the agent-org org-tree node name      -> `org`, which says explicitly when
+ *      it did NOT change instead of leaving the caller to assume
+ */
+export interface SelfRenameResult {
+  agentId: string;
+  /** The nickname that was live before the call. */
+  previousNickname: string;
+  /** The nickname now live, and persisted. */
+  nickname: string;
+  /** Changed: true only when the stored value actually moved. */
+  changed: boolean;
+  /** The identity file this call wrote (store A). */
+  identityFile: string;
+  /** Joined-room clients the profile frame was pushed to right away (store B). */
+  profileFanout: number;
+  /** Rooms this node owns whose member row was updated in place (store B). */
+  ownedRoomMembers: number;
+  /**
+   * Rooms where another member ALREADY uses the new nickname. Reported, never a
+   * refusal: `room-service` resolves an @mention by nickname and throws
+   * `ambiguous-member` when two members share one, so the caller has to know —
+   * but blocking the rename would leave the node on a name it cannot change,
+   * which is the defect this release closes.
+   */
+  nicknameConflicts: Array<{ roomId: string; agentIds: string[] }>;
+  /** Store C, reported honestly: `updated: false` always carries a `reason`. */
+  org: {
+    attempted: boolean;
+    updated: boolean;
+    nodeId?: string;
+    rev?: number;
+    reason?: string;
+  };
+}
+
 export interface RoomGateway {
   identity(): Promise<AgentIdentity>;
+  /** Rename this node, consistently across identity.json, the room members' view
+   *  and the org tree; applies to the live process (no restart) and fans out at
+   *  once instead of waiting for the 15s profile timer. Throws
+   *  InvalidNicknameError / IdentityNotReadyError, and nothing is changed then. */
+  renameSelf(nickname: string): Promise<SelfRenameResult>;
   createRoom(input: CreateRoomInput): Promise<Room>;
   closeRoom(roomId: string): Promise<void>;
   destroyRoom(roomId: string): Promise<void>;
@@ -40,7 +93,18 @@ export interface RoomGateway {
   kickMember(roomId: string, agentId: string): Promise<void>;
   revokeMember(roomId: string, agentId: string, reason?: string): Promise<RevokedMember>;
   unrevokeMember(roomId: string, agentId: string): Promise<void>;
-  sendChat(roomId: string, input: { text: string; replyTo?: number; mentions?: string[]; human?: boolean }): Promise<ChatMessage | null>;
+  /**
+   * Send a chat message.
+   *
+   * Owned room: the authoritative ChatMessage (with a real seq).
+   * Joined room: a delivery status object — never `null` (0.1.34). The frame may
+   * be queued (control frames) or dropped (plain chat) when the channel is not
+   * OPEN, and the caller has to be able to tell the difference and retry.
+   */
+  sendChat(
+    roomId: string,
+    input: { text: string; replyTo?: number; mentions?: string[]; human?: boolean },
+  ): Promise<ChatMessage | ChatDeliveryStatus>;
   updateSettings(roomId: string, patch: Partial<RoomSettings> & { password?: string }): Promise<Room>;
   transferController(roomId: string, toAgentId: string): Promise<Room>;
 

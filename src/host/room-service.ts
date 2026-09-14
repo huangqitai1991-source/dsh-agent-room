@@ -22,6 +22,7 @@ import type {
   TaskHandoff,
 } from "../types.js";
 import { Persistence } from "./persistence.js";
+import { nicknameProblem } from "./safety.js";
 import { hashPassword, nowIso, randomToken, signRelayTicket, uuidv7, verifyPassword } from "./util.js";
 import { ZERO_WEIGHT_CAPABILITIES } from "./catalog.js";
 
@@ -94,6 +95,18 @@ export class RoomService extends EventEmitter {
 
   /* ------------------------------ identity ----------------------------- */
 
+  /**
+   * Return this node's identity, minting one on a genuine first run (0.1.38).
+   *
+   * The mint branch below is reachable ONLY when `loadIdentity()` returns null,
+   * and since 0.1.38 that means exactly one thing: `identity.json` DOES NOT
+   * EXIST. A present-but-unparseable file (a UTF-8 BOM from PowerShell 5.1, a
+   * truncated write, garbage) now throws CorruptConfigError from the read path,
+   * so it can never reach `saveIdentity` — the silent agentId re-mint this
+   * release exists to stop. `saveIdentity` independently refuses to overwrite an
+   * unparseable identity.json, which keeps that property even if a future caller
+   * swallows the error somewhere above.
+   */
   async ensureIdentity(): Promise<AgentIdentity> {
     if (this.identity) return this.identity;
     const existing = await this.persistence.loadIdentity();
@@ -118,7 +131,15 @@ export class RoomService extends EventEmitter {
 
   async updateProfile(patch: Partial<Pick<AgentIdentity, "nickname" | "bio">> & { capabilities?: string[] }): Promise<AgentIdentity> {
     const id = await this.ensureIdentity();
-    if (patch.nickname !== undefined) id.nickname = patch.nickname;
+    // G1 (0.1.38): validate a nickname where it is deliberately SET, not on every
+    // save. Validating inside saveIdentity would let a pre-existing bad name —
+    // the literal "NAME" that an unfilled template wrote on two machines — turn a
+    // routine capability merge at boot into a startup outage.
+    if (patch.nickname !== undefined) {
+      const problem = nicknameProblem(patch.nickname);
+      if (problem) throw new Error(`拒绝写入该昵称：${problem}`);
+      id.nickname = patch.nickname;
+    }
     if (patch.bio !== undefined) id.bio = patch.bio;
     if (patch.capabilities !== undefined) id.capabilities = [...new Set(patch.capabilities)];
     await this.persistence.saveIdentity(id);
@@ -491,6 +512,37 @@ export class RoomService extends EventEmitter {
     return this.persistence.loadRecentMessages(roomId, limit, before);
   }
 
+  /**
+   * Highest seq this node has assigned for an owned room, control frames
+   * included (0.1.35).
+   *
+   * Authoritative and O(1): the counter is restored from persisted history on
+   * boot and bumped by addChatMessage, so the owner can answer "what is your
+   * latest seq" without touching the message file. This is the number a member
+   * uses to notice it is behind (see src/host/backfill.ts).
+   */
+  latestSeq(roomId: string): number {
+    return this.seqs.get(roomId) ?? 0;
+  }
+
+  /**
+   * Confirmed messages in `[fromSeq, toSeq]`, oldest first, capped at `limit`
+   * (0.1.35). Used only to answer a member's bounded sync request; callers pass
+   * a small span and count.
+   */
+  async messagesInRange(roomId: string, fromSeq: number, toSeq: number, limit = 200): Promise<ChatMessage[]> {
+    const room = this.requireOwned(roomId);
+    const from = Math.max(1, Math.floor(fromSeq));
+    const to = Math.max(from, Math.floor(toSeq));
+    if (room.type === "temporary") {
+      return (this.memoryMessages.get(roomId) ?? [])
+        .filter((m) => m.seq >= from && m.seq <= to)
+        .sort((a, b) => a.seq - b.seq)
+        .slice(0, Math.max(1, Math.floor(limit)));
+    }
+    return this.persistence.loadMessagesInRange(roomId, from, to, Math.max(1, Math.floor(limit)));
+  }
+
   private readonly memoryMessages = new Map<string, ChatMessage[]>();
   /** Attach a chat message to the in-memory stream (used by PeerServer for temporary rooms). */
   trackMessage(roomId: string, message: ChatMessage): void {
@@ -797,6 +849,34 @@ export class RoomService extends EventEmitter {
 
   async recordVisited(roomId: string, address: string, title?: string): Promise<void> {
     await this.recordJoined(roomId, address, title);
+  }
+
+  /**
+   * Remove ONE joined-room record (0.1.34). Returns whether a record was there.
+   *
+   * Used when a room is proven gone (join rejected: room-not-found/closed), when
+   * `leave` cannot reach the owner, and when a record turns out to point at this
+   * node's own room. All three are local cleanup, and local cleanup must never
+   * depend on the remote room answering.
+   */
+  async removeJoinedRoom(roomId: string): Promise<boolean> {
+    const before = this.joined.length;
+    if (before === 0) return false;
+    this.joined = this.joined.filter((record) => record.roomId !== roomId);
+    if (this.joined.length === before) return false;
+    await this.persistence.saveJoined(this.joined);
+    return true;
+  }
+
+  /**
+   * Replace the joined-room list wholesale (used by boot-time pruning of records
+   * that can no longer be reached). Returns the number actually removed.
+   */
+  async replaceJoinedRooms(records: JoinedRoomRecord[]): Promise<number> {
+    const removed = this.joined.length - records.length;
+    this.joined = records.slice(0, 50);
+    await this.persistence.saveJoined(this.joined);
+    return removed;
   }
 }
 

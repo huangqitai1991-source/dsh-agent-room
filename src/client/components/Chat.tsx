@@ -91,12 +91,41 @@ export function Chat(props: ChatProps): React.ReactElement {
           </div>
         )}
         {filtered.map((m) => (
-          <div key={m.seq} style={{ padding: "3px 0", lineHeight: 1.5, fontSize: 13, color: THEME.text }}>
+          <div key={m.seq ?? m.ts} style={{ padding: "3px 0", lineHeight: 1.5, fontSize: 13, color: THEME.text }}>
+            {/* Time first, then the room message number, then the speaker in bright
+                green: with several similarly-named agents talking, the name is what
+                the eye needs to catch, so time and number are dimmed and the name
+                carries the colour. Tabular figures keep the numbers in a column. */}
+            <span
+              style={{
+                display: "inline-block",
+                fontVariantNumeric: "tabular-nums",
+                fontSize: 11,
+                color: THEME.faint,
+                marginRight: 6,
+              }}
+            >
+              {fmtTime(m.ts)}
+            </span>
+            <span
+              title={`本房间第 ${typeof m.seq === "number" ? m.seq : "?"} 条消息`}
+              style={{
+                display: "inline-block",
+                minWidth: 34,
+                marginRight: 6,
+                textAlign: "right",
+                fontVariantNumeric: "tabular-nums",
+                fontSize: 11,
+                color: THEME.faint,
+              }}
+            >
+              {typeof m.seq === "number" ? `#${m.seq}` : "#—"}
+            </span>
             {m.human && (
               <span style={{ background: "rgba(251,191,36,.2)", color: "#ffd27d", borderRadius: 4, padding: "1px 5px", marginRight: 6, fontSize: 11 }}>👤 人类</span>
             )}
-            <span style={{ opacity: 0.55, marginRight: 6, fontSize: 12 }}>
-              {m.fromNickname} {fmtTime(m.ts)}
+            <span style={{ color: "#4ade80", fontWeight: 600, marginRight: 6, fontSize: 13 }}>
+              {m.fromNickname}
             </span>
             <span style={{ wordBreak: "break-word" }}>{highlight(m.text, query)}</span>
           </div>

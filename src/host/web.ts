@@ -8,6 +8,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AgentRoomService } from "./service.js";
+import { IdentityNotReadyError, InvalidNicknameError } from "./safety.js";
 import type { AgentIdentity, RoleKey } from "../types.js";
 
 export const name = "agent-room-web";
@@ -42,6 +43,18 @@ export function createRouter(service: AgentRoomService): Handler {
         const body = (await readJson(request)) as { relay?: string };
         const relay = await service.setRelayConfig(body.relay);
         return sendJson(response, 200, { ok: true, data: { relay: relay ?? null } });
+      }
+
+      // One-click 中继 ⇄ 局域网 switch: relay-config plus a re-join of every
+      // joined room in one server-side step (a half-applied switch strands rooms
+      // on mixed transports and the node flaps).
+      if (method === "POST" && path === "/agent-room-api/mode") {
+        const body = (await readJson(request)) as { mode?: string; address?: string };
+        if (body.mode !== "lan" && body.mode !== "relay") {
+          return sendJson(response, 400, { ok: false, error: "mode must be \"lan\" or \"relay\"" });
+        }
+        const data = await service.setConnectionMode(body.mode, body.address);
+        return sendJson(response, 200, { ok: true, data });
       }
 
       const messagesMatch = /^\/agent-room-api\/rooms\/([^/]+)\/messages$/.exec(path);
@@ -85,8 +98,17 @@ export function createRouter(service: AgentRoomService): Handler {
 
       const leaveMatch = /^\/agent-room-api\/rooms\/([^/]+)\/leave$/.exec(path);
       if (method === "POST" && leaveMatch) {
-        await service.gateway.leaveRoom(decodeURIComponent(leaveMatch[1]!));
-        return sendJson(response, 200, { ok: true });
+        const roomId = decodeURIComponent(leaveMatch[1]!);
+        try {
+          await service.gateway.leaveRoom(roomId);
+          return sendJson(response, 200, { ok: true });
+        } catch (err) {
+          // Leaving is LOCAL cleanup. The owner may be unreachable or the room may
+          // have been deleted long ago (HTTP 500 blocked exactly that cleanup),
+          // so surface the reason but never pretend the local record survived.
+          console.error(`[agent-room] leave ${roomId} failed: ${(err as Error).message}`);
+          return sendJson(response, 200, { ok: true, local: true, warn: (err as Error).message });
+        }
       }
 
       const deleteMatch = /^\/agent-room-api\/rooms\/([^/]+)\/delete$/.exec(path);
@@ -168,12 +190,34 @@ export function createRouter(service: AgentRoomService): Handler {
       if (method === "POST" && chatMatch) {
         const body = (await readJson(request)) as { text?: string; mentions?: string[]; human?: boolean };
         if (!body.text) return sendJson(response, 400, { ok: false, error: "text is required" });
-        const message = await service.gateway.sendChat(decodeURIComponent(chatMatch[1]!), {
+        const result = await service.gateway.sendChat(decodeURIComponent(chatMatch[1]!), {
           text: body.text,
           mentions: body.mentions,
           human: body.human,
         });
-        return sendJson(response, 200, { ok: true, data: { seq: message?.seq ?? null } });
+        // Joined rooms answer with a delivery status; owned rooms with the real
+        // message. Report both instead of a bare `seq: null` that hid the drop.
+        //
+        // 0.1.35: `delivered` is kept as a DEPRECATED alias of
+        // `acceptedByLocalHub` because dsh-agent-org 0.2.10 reads it; the honest
+        // fields are the two new ones. `confirmedByOwner` is only true when the
+        // owner echoed the message back with its own seq.
+        if (result && "delivered" in result) {
+          return sendJson(response, 200, {
+            ok: true,
+            data: {
+              seq: result.confirmedSeq ?? null,
+              acceptedByLocalHub: result.acceptedByLocalHub,
+              confirmedByOwner: result.confirmedByOwner,
+              confirmedSeq: result.confirmedSeq ?? null,
+              confirmNote: result.confirmNote,
+              delivered: result.delivered,
+              queued: result.queued,
+              reason: result.reason,
+            },
+          });
+        }
+        return sendJson(response, 200, { ok: true, data: { seq: result?.seq ?? null, acceptedByLocalHub: true, delivered: true, confirmedByOwner: true, confirmNote: "owner-confirmed" } });
       }
 
       const settingsMatch = /^\/agent-room-api\/rooms\/([^/]+)\/settings$/.exec(path);
@@ -296,6 +340,28 @@ export function createRouter(service: AgentRoomService): Handler {
         const body = (await readJson(request)) as { capabilities?: string[] };
         await service.gateway.setMemberCapabilities(decodeURIComponent(memberCapsMatch[1]!), body.capabilities ?? []);
         return sendJson(response, 200, { ok: true });
+      }
+
+      // 0.1.40: the supported rename entry point (card-01). One call converges
+      // identity.json, the room members' view (pushed immediately, not on the 15s
+      // timer) and the agent-org node name; no restart.
+      if (method === "POST" && path === "/agent-room-api/profile") {
+        const body = (await readJson(request)) as { nickname?: string };
+        try {
+          const data = await service.renameSelf(String(body.nickname ?? ""));
+          return sendJson(response, 200, { ok: true, data });
+        } catch (error) {
+          // A name the node must not write is the CALLER's problem (400), and a
+          // node whose identity cache is not up yet is a state conflict (409).
+          // Neither is a 500: nothing here is broken, and nothing was changed.
+          if (error instanceof InvalidNicknameError) {
+            return sendJson(response, 400, { ok: false, error: error.message, reason: error.reason });
+          }
+          if (error instanceof IdentityNotReadyError) {
+            return sendJson(response, 409, { ok: false, error: error.message });
+          }
+          throw error;
+        }
       }
 
       return sendJson(response, 404, { ok: false, error: "not-found" });
