@@ -19,6 +19,17 @@ import { sendWithRetry } from "./delivery.js";
 /** One warning per key per minute: a broken channel must not flood the log. */
 const WARN_WINDOW_MS = 60_000;
 
+/**
+ * Minimum movement of a node's `lastSeenAt` before the liveness stamp is written
+ * to disk (D-20, 0.2.13).
+ *
+ * Liveness is a diagnostic, not authoritative tree state: persisting on every
+ * inbound sync frame would be write amplification (the 411 MB audit file and the
+ * 923 MB join log are what that lesson cost), so the value is always updated in
+ * memory and only flushed this often. A crash loses at most this much resolution.
+ */
+const LIVENESS_PERSIST_MS = 30_000;
+
 import { checkPermission, canRenameNode, roleFor } from "./permission.js";
 import { AuditLog } from "./audit.js";
 import {
@@ -179,6 +190,67 @@ export class OrgService extends Service {
     await this.broadcastSnapshot();
   }
 
+  /**
+   * Stamp a node's liveness (D-20, 0.2.13).
+   *
+   * WHAT IT IS FOR: `GET /agent-org-api/state` could not answer "is this colleague
+   * reachable". Node records carried `updatedAt`, which is an EDIT stamp — measured
+   * frozen at 2026-09-12T14:26 while the machine was alive — so a reader had to
+   * spend three exec timeouts (45s/25s/25s) plus a room ping and still ended up
+   * asking a human whether 小捷 was off duty or wedged. `lastSeenAt` answers it from
+   * state alone, and `lastExecAt`/`lastExecOk` add "and it can actually run
+   * commands".
+   *
+   * DELIBERATELY NOT `save()`: that bumps `rev` and BROADCASTS a snapshot, so
+   * stamping liveness on every inbound frame would fan a full org tree out over the
+   * room at frame rate — the write-amplification class this codebase already paid
+   * for twice (a 411 MB audit file, a 923 MB join log). Liveness is written on a
+   * throttle and travels with the next real snapshot; the LIVE surface for "is it
+   * reachable right now" is the room's own `member.lastSeenAt`, which updates on
+   * every frame. `state.updatedAt` remains the snapshot's own timestamp, so a
+   * reader can always tell how fresh the liveness fields are.
+   *
+   * @param {string} agentId
+   * @param {{execOk?: boolean, address?: string}} [patch]
+   * @returns {object|undefined} the node, or undefined when no node carries that agentId
+   */
+  touchNodeLiveness(agentId, patch = {}) {
+    const id = String(agentId ?? "");
+    if (!id) return undefined;
+    const node = this.state.nodes.find((n) => n.agentId === id);
+    if (!node) return undefined;
+    const now = nowIso();
+    // Decided BEFORE the update: this is the disk-write throttle.
+    const moved = !node.lastSeenAt || Date.parse(now) - Date.parse(node.lastSeenAt) >= LIVENESS_PERSIST_MS;
+    if (patch.address) node.lastSeenAddress = String(patch.address);
+    if (patch.execOk !== undefined) {
+      node.lastExecAt = now;
+      // A boolean, never a coerced truthy: "unknown" must stay distinguishable.
+      node.lastExecOk = patch.execOk === true;
+    }
+    node.lastSeenAt = now;
+    if (moved || patch.execOk !== undefined) {
+      void this.persistence.save(this.state).catch(() => { /* diagnostics only */ });
+    }
+    return node;
+  }
+
+  /** Liveness of one node, as `GET /agent-org-api/state` reports it. */
+  nodeLiveness(nodeIdOrAgentId) {
+    const node = this.state.nodes.find((n) => n.id === nodeIdOrAgentId || n.agentId === nodeIdOrAgentId);
+    if (!node) return undefined;
+    return {
+      nodeId: node.id,
+      name: node.name,
+      agentId: node.agentId,
+      lastSeenAt: node.lastSeenAt,
+      lastSeenAddress: node.lastSeenAddress,
+      lastExecAt: node.lastExecAt,
+      lastExecOk: node.lastExecOk,
+      updatedAt: node.updatedAt,
+    };
+  }
+
   /** Broadcast the org snapshot to the sync room (cross-machine sync). */
   async broadcastSnapshot() {
     if (!this.config.syncRoomId || !this.syncReady) return;
@@ -204,9 +276,18 @@ export class OrgService extends Service {
     const text = message?.text;
     if (!this.config.syncRoomId || roomId !== this.config.syncRoomId) return;
 
+    // 0. LIVENESS (D-20, 0.2.13): this frame proves the sender's plugin is alive
+    //    right now. Recorded before any branch, so a snapshot, an instruction or a
+    //    result all count as contact — and a colleague who is merely OFF DUTY stops
+    //    looking identical to one whose plugin is wedged.
+    if (message?.from) this.touchNodeLiveness(message.from);
+
     // 1. exec result -> resolve the pending sender (interim 202 answers ignored)
     const result = decodeExecResult(text);
     if (result) {
+      // A finished answer separates "reachable" from "reachable and able to run
+      // commands"; the 202 interim body is NOT a result and must not stamp `ok`.
+      if (result.pending !== true) this.touchNodeLiveness(result.by ?? message.from, { execOk: result.ok === true });
       this.execPlane.handleResult(result);
       return;
     }
@@ -218,7 +299,10 @@ export class OrgService extends Service {
     //    every delivery (cached result / still-executing 202 / fresh result).
     const instruction = decodeExec(text);
     if (instruction) {
-      await this.execPlane.handleInstruction(instruction, message);
+      const outcome = await this.execPlane.handleInstruction(instruction, message);
+      // The TARGET side's own liveness: this node really did run (or refuse) the
+      // command, which is the strongest liveness evidence there is.
+      if (outcome?.executed) this.touchNodeLiveness(outcome.result?.by, { execOk: outcome.result?.ok === true });
       return;
     }
 
@@ -782,6 +866,13 @@ export class OrgService extends Service {
         name: n.name,
         agentId: n.agentId,
         parentId: n.parentId,
+        // Liveness (D-20, 0.2.13): "who of my people is reachable", from state
+        // alone. Absent (undefined) for a node that has not been heard from since
+        // the upgrade — unknown, never "offline".
+        lastSeenAt: n.lastSeenAt,
+        lastSeenAddress: n.lastSeenAddress,
+        lastExecAt: n.lastExecAt,
+        lastExecOk: n.lastExecOk,
       })),
       summary,
       roomCount: rooms.length,
