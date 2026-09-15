@@ -521,6 +521,55 @@ node "$repo\build.mjs"
 只是在自有房间上会继续跳过）；② 各机 `$Work` 下的 `before-listening.json` / `listening-capture.cjs` / `auto-wake.cjs`
 会留在磁盘上（无人读，无害）。
 
+## 11. 小麦（kiki）人工收尾说明（给坐到那台机器前的人，一段就够）
+
+**先说结论：2026-09-15 10:17 那次升级**已经把 小麦 推到了 **0.1.44**（`org 0.2.12`、`listening=true`、relay 已配置、
+chat 自测 `confirmedByOwner:true`）。所以下面这段**不是"必须做的事"**，而是「如果它需要再升一次/要复核」时的标准动作。
+
+```powershell
+# —— 小麦 kiki：0.1.44 升级 / 复核（工作目录是 C:\studio）——
+# 0) 先看现在是什么版本（已经 0.1.44 就不必再跑升级）
+(Get-Content C:\Users\Administrator\.dsh\profiles\web\node_modules\dsh-agent-room\package.json -Raw | ConvertFrom-Json).version
+
+# 1) 确认升级脚本是最新修订（必须能搜到 step "1c"，否则先换成 8090 上的那份）
+$sh = "C:\studio\upgrade-studio.ps1"
+(Select-String -Path $sh -Pattern 'Step "1c"' | Measure-Object).Count      # 期望 1
+
+# 2) 跑升级（具名参数；-Work 是它自己的工作目录）
+Start-Process powershell -ArgumentList @(
+  '-NoProfile','-ExecutionPolicy','Bypass','-File', $sh,
+  '-Server','42.193.189.15','-Port','8090','-RoomVer','0.1.44','-OrgVer','0.2.12','-Work','C:\studio'
+) -RedirectStandardOutput C:\studio\upg.out.log -RedirectStandardError C:\studio\upg.err.log
+
+# 3) 等它跑完（约 1 分钟），然后看这四样
+Get-Content C:\studio\upg.out.log -Tail 40
+curl.exe -s http://127.0.0.1:3080/agent-room-api/state     # 期望 listening=true
+Get-Content C:\Users\Administrator\.dsh\agent-room\listening.json
+#   升级日志里应该看到：[1c] LISTENING-CAPTURE 两行 + [8] 换了 PID
+#   如果最后是 "the new supervisor REFUSED to start" + exit 1：**那是 D-33，不是升级失败** ——
+#   看它上面两行：只要 "port 3080 owner after restart" 是**新 PID**、且 state 里 listening=true，升级就是成功的。
+#   这种情况下脚本会跳过 9b/9c，想看 9c 的结论就手动跑一次：
+node C:\studio\auto-wake.cjs --base http://127.0.0.1:3080 --timeout-ms 5000 --retry-ms 3000 --window-ms 20000 --before-file C:\studio\before-listening.json
+```
+
+**那台机器上已知的坑（别浪费时间去试）**：
+
+1. **`cmd` 里直接起 `powershell.exe` 会被拒**（`拒绝访问。`，D-29）；**从 `node` 里 spawn 是好的**
+   （`node -e "require('child_process').spawnSync('powershell.exe',['-NoProfile','-Command','exit 0'])"` → status 0）。
+   所以：**要自动化就用 `node` 起 PowerShell**，或在**交互式控制台**里直接跑（人工在场时这条最省事）。
+2. **跨机写文件一律 base64 + 正斜杠/十六进制路径**（D-32）：反斜杠会在传输中被吃掉，
+   表现为「文件明明写了又不见了」。写完**用字节数回读校验**。
+3. **绝不要关掉那台机器的安全软件**（那是 360 之类主动防御在拦"从受限上下文启动控制台程序"，
+   绕过它等于把机器的防护关掉 —— 不允许）。
+4. **不要用 `-Verify` 的空参数形式判版本**：它默认期望 `0.1.40`，会打印
+   `installed version : 0.1.44 (wanted 0.1.40)` 这种"FAIL"。要跑就带上 `-RoomVer 0.1.44`。
+5. **不要动 `C:\studio\start-studio.cmd`**：它是看门狗（升级脚本自己会保留它）。
+   本次我在这台机器上**只删了自己造的临时文件**（36 个 `d28-*` / `upgrade-launch-0144*` / `upgrade-runner.js` /
+   `upg.*` / `before-listening.json` / `upgrade-studio.ps1.bak-before-0144`），并删掉了一个**坏的**计划任务
+   `\DSHUpgrade0143`（它的目标 `C:\Users\Administrator\studio\upg-launch.cmd` 指向一份**不存在**的
+   `C:\Users\Administrator\studio\upgrade-studio.ps1`，上次结果 = 1）。
+   **我没有删** `C:\Users\Administrator\studio\upg-launch.cmd` 本身（那是别人放的文件，是否清理由人决定）。
+
 ## 10. 本版**没有**验证 / 主动排除的部分（如实列出）
 
 1. **第一轮升级的"她为什么变哑"没有拿到直接证据**。第二轮她**自行恢复**了（§7.2），
