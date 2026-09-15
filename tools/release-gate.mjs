@@ -34,6 +34,24 @@
  *   reason is REFUSED (exit 1) and writes NOTHING: a skip whose reason does not exist cannot be
  *   recorded, so it does not happen.
  *
+ * THIS FILE DOES NOT PACK, UPLOAD OR INSTALL -- SO RUNNING IT DIRECTLY GATES NOTHING ABOUT SHIPPING
+ *   A gate is only as wide as the path that goes through it. This tool DECIDES; it never produces an
+ *   artifact. So: invoking `node tools/release-gate.mjs release ...` yourself, running `npm pack` by
+ *   hand, copying the .tgz onto the file server by hand, or installing by hand
+ *   (`dsh plugin --profile web add <file>.tgz`) BYPASSES ALL FOUR GATES. None of those steps runs this
+ *   file -- they do not even ask it -- and none of them leaves an evidence, acceptance, canary or
+ *   publish record behind. A .tgz made that way is untraceable, so it is unsupported.
+ *
+ *   THE ONLY SUPPORTED PATH IS  ->  node tools/release.mjs
+ *   (see its header). It runs these four gates through the `release` composition entry FIRST, packs
+ *   with `npm pack` ONLY when they allow, uploads the artifact, reads it back over HTTP by md5, and
+ *   writes {ts, version, gate:"publish", verdict, artifact, md5, actor} into the ledger -- so a file
+ *   sitting on the server can be traced to the gate run that allowed it. Anything else is a
+ *   convention, not a mechanism.
+ *
+ *   Deliberately NOT gated: the launcher's read-only modes (-Verify / -WatchdogOnly). They install
+ *   nothing, publish nothing and restart nothing, so there is no release for them to gate.
+ *
  * FAIL CLOSED
  *   A gate that cannot read its inputs REFUSES: no config, unreadable config, unresolvable machine
  *   facts, an unreadable ledger. None of those is a pass, and none of them is reported as one.

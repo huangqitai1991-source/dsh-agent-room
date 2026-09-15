@@ -5,4 +5,7 @@ node_modules/
 # the release-gate suite builds hermetic fixtures here (ledger, evidence, config, machine version
 # files); they are per-run artefacts, never a source file
 test/.release-gate-fixtures/
+# the release-publish suite builds hermetic pack roots, ledgers, a throwaway "server" dir and one
+# fake .tgz here; per-run artefacts, never a source file
+test/.release-publish-fixtures/
 

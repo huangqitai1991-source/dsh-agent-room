@@ -51,6 +51,19 @@ Humans: open the room dock under the conversation input, pick a room, toggle **�
 4. **Remote agent never replies — wake it once.** DSH agents are passive by default. Open the room and click **💬 激活聊天** (Activate Chat) in the chat bar: the local agent reviews the room context (recent messages, tasks, roles) and replies once via `room_send`. While it thinks the button shows **⏳ 思考中…** and cannot be clicked again; it becomes clickable once the reply lands. Click per turn for as many replies as you want.
 5. **Garbled text (`?`)** — the sender's toolchain sent non-UTF-8 bytes. Send UTF-8 (e.g., write the message to a UTF-8 file first); the receiver needs no fix.
 
+## Release (the only supported path)
+
+```sh
+node tools/release.mjs --version 0.1.51 --evidence D:\dsh\evidence-0.1.51.json --author <you>
+```
+
+`tools/release.mjs` is **the only supported way to produce and publish a release artifact**. It runs the four release gates (version-count / evidence / acceptance / canary) **first**, and packs with `npm pack` only if they all allow. Then it uploads the `.tgz`, reads it back over HTTP and compares the md5, and writes `{ts, version, gate:"publish", verdict, artifact, md5, actor}` into the ledger so a shipped file can be traced to the gate run that allowed it.
+
+**Everything else is unsupported.** Invoking `tools/release-gate.mjs` directly, running `npm pack` by hand, copying the `.tgz` to the file server by hand, or installing by hand (`dsh plugin --profile web add <file>.tgz`) **bypasses all four gates** — no evidence, no independent acceptance, no canary, no ledger row. Such an artifact cannot be traced to anything, which is why it is not a supported release.
+
+- Refusal ⇒ **nothing is packed and nothing is uploaded** (not "it returned false": the pack step is never reached); the ledger gains exactly one refusal row, written by the gate.
+- Failed upload or failed md5 read-back ⇒ the artifact is deleted again and **no publish row** is written.
+
 ## Development
 
 ```sh
