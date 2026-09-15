@@ -2,4 +2,7 @@ node_modules/
 *.tgz
 *.log
 .herness/
+# the release-gate suite builds hermetic fixtures here (ledger, evidence, config, machine version
+# files); they are per-run artefacts, never a source file
+test/.release-gate-fixtures/
 
