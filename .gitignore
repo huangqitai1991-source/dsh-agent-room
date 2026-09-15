@@ -8,4 +8,6 @@ test/.release-gate-fixtures/
 # the release-publish suite builds hermetic pack roots, ledgers, a throwaway "server" dir and one
 # fake .tgz here; per-run artefacts, never a source file
 test/.release-publish-fixtures/
+# the machine-facts suite writes its facts/config/ledger fixtures here; per-run artefacts
+test/.machine-facts-fixtures/
 
