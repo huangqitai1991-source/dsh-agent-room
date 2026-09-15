@@ -41,6 +41,7 @@ helper 又在一个空房间列表上赛跑（`rooms after upgrade: 0`、`AUTO-W
 | 首次从旧版本升级 | **无据可恢复**（没人写过意图文件） | 升级脚本**换包前**把运行中的 `listening` 快照落盘作意图 ⇒ 升级后那次启动即恢复 |
 | 重启后核对口径 | helper「打开一切并报成功」 | helper **拿快照核对**：插件自己恢复的记「BY THEMSELVES」，没恢复的**先报再救**（加入的房间救、**自有房间不救**） |
 | 房主重启后仍哑 | 被 helper 一行成功样的话盖住 | **升级红着失败**（`AUTO-WAKE FAILED: ... (OWNED room, ... not restored after it - 0.1.44 D-28)`，exit 1） |
+| **房主一次重启（已公告）后** | 0.1.43：`listening=false`（现场实测） | **0.1.44：`listening=true`，无人帮助、无 POST、意图文件 mtime 未变**（§7.2b 验收） |
 
 **一个刻意的取舍**：升级 helper **不再替自有房间 POST**。它是 0.1.42 起「帮忙兜底」的那一步，
 也正是它把「插件没恢复」这件事一直遮住（每次升级都替房主打开 ⇒ 看起来一切正常）。
@@ -277,6 +278,8 @@ AUTO-WAKE lines in upg.out.log: (none)
 顺带得到一条独立佐证：第一次升级（0.1.43 那轮）她的 `listening=true` 是 **helper 帮她开的**
 （`1 of 1 room(s) re-opened ... 0 were already on`），这正是 D-28 描述的"每次都要人帮"。
 
+> **本节之后还有一次正式的、单一变量的验收重启（§7.2b），那一次才是本条的口径验收结论。**
+
 **副作用（必须如实报）**：她的升级脚本第 8 步因 watchdog 锁自检 **exit 1**（`ALREADY-RUNNING pid=17312`），
 所以那一步之后的「served bundle 校验」与「Auto-wake 自检」都没有跑。
 服务本身是好的（新 PID 13764、3080 LISTENING、relay/open、listening=true）。
@@ -284,7 +287,73 @@ AUTO-WAKE lines in upg.out.log: (none)
 本轮 log 里 `supervisor refusals before/after = 1/2` 也说明她的 supervisor 环境本来就有一次既有拒绝。
 **但它让"升级成功"这句话变弱了**——见 §10.3。
 
-### 7.3 小捷（Windows，**成员机**）— 首次升级**自举**那一半的真机证据
+### 7.2b 小婷（Windows，**房主**）— 正式验收：一次已公告的重启，**无人帮助**自行恢复 ✓
+
+前面 §7.2 那两轮是**升级**的两轮。为了让"自有房间恢复"这条有一个**干净、单一变量**的验收，
+在 0.1.44 已经装好、`listening=true` 之后，我又做了**一次**重启（这是本节的验收动作，也是交办要求的"ONE restart"）：
+
+**动手前的验明正身（D-31 纪律，脚本内硬性把关，不是靠自觉）**：
+
+```
+IDENTIFY 2026-09-15T02:06:00.225Z
+LISTENERS=[{"local":"127.0.0.1:3080","pid":"13764"}]
+  pid=13764 exe=node isDsh=true isShell=false
+    cmdline="node"   "C:\\Users\\46157\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" web --no-open
+WATCHDOG=["cmd.exe" /c C:\Users\46157\studio\start-studio.cmd]
+GATES=[["one listener",true],["listener is dsh web",true],["listener is not a shell/wrapper",true],["watchdog present",true]]
+```
+
+选 pid **只**来自 `netstat -ano` 的 `127.0.0.1:3080 … LISTENING` 行的最后一列；身份判定是与**那个 pid** 比对
+（`isDsh` / `isShell` 两个标志），**没有任何按子串筛进程的匹配**；四道闸任一不过就**拒绝动手**（脚本里 `REFUSED_TO_KILL`）。
+看门狗在场 ⇒ 误杀可恢复。
+
+**结果**（原始：`D:\dsh\_fix-d28\test2-restart-verdict.txt`）：
+
+```
+KILL pid=13764 exe=node      （只杀这一个）
+UP_AFTER_S=8   CAME_BACK=true
+K_BEFORE=room=0.1.44 owned=true listening=true bridge=relay/open rooms=1
+K_AFTER =room=0.1.44 owned=true listening=true bridge=relay/open rooms=1
+INTENT_BEFORE={"rooms":["01a098a2-..."]} mtime=2026-09-15T01:02:21.729Z
+INTENT_AFTER ={"rooms":["01a098a2-..."]} mtime=2026-09-15T01:02:21.729Z   ← 完全没变
+PIDS_AFTER="15904"            （换过进程 ⇒ 确实重启了）
+VERDICT=RESTORED_BY_ITSELF
+```
+
+**三条硬证据**（不依赖任何自述）：① 进程换过（13764 → 15904）⇒ 这次是真的重启；
+② 重启后 `listening=true`；③ 意图文件 mtime **前后完全一致** ⇒ boot **没有**重写过它、
+也**没有**任何 POST/脚本写过它（本轮我没有发过 listening POST，也没有改过任何文件）。
+部署代码自检：该机 `lib/host/service.js` 里**不含** `skipped (owned)` ⇒ 装的确实是 0.1.44 的修法。
+
+⇒ **D-28 的"自有房间恢复"在房主真机上验收通过 ✓**。房间公告：重启前 seq 3225（11:06 本地），
+结果 seq 3231（`confirmedByOwner:true`）；不可用约 8 秒。
+
+### 7.3 小捷（Windows，**成员机**）— 证据已**作废**（机器归属变更，如实留档）
+
+**2026-09-15 10:1x：本条证据作废 ✗，不作为本版的验收依据。**
+起因：小捷的 **0.1.43 步骤与它当前的 `listening=false` 已归属于另一个 worker**，
+本版发布者**不再驱动这台机器**（不得重启、不得升级、不得 POST listening）。
+我在 09:08–09:12 对它做过的一轮升级与意图文件改名，因此**落在了另一个 worker 正在负责的机器上** ——
+这是我的越界操作，不能拿它当本版的证据。
+
+**为什么这条必须整段作废、而不是"用一半"**：那一轮里我**手工把意图文件改名挪走**，
+再造出"磁盘上没有意图文件"的起点。这恰好可能**干扰那位 worker 正在进行的验证**
+（它那边的 `listening=false` 与"意图文件是否存在"正是它要观察的量）。
+所以这一轮既不能算我的证据，也可能污染它的现场。
+
+保留原始输出备查（`D:\dsh\_fix-d28\test3-*.txt`），但**结论一律不引用**：
+`[1c] listening intent written to ...` / `3080 owner 3640 → 12472` / `listening=true` /
+`1 of 1 room(s) ... BY THEMSELVES (no POST from this script)` —— 这些字面上都发生过，
+但**发生在不该由我动的机器上**，按纪律作废。
+
+**D-28 第二半（首次升级自举）的真机证据因此回到"未验证"** ✗：
+本版只有 stub 级与静态级证据（§5.2、`_test-listening-capture-0144.cjs` 用例 A/B、
+两侧 helper 逐字节相同 + 1c 恰好一次 + 位置断言）。
+真正的合格样本是"跑着旧版本且没有意图文件"的机器；按现在的口径那是**小麦**，而它**不由我动**。
+补救路径（已写进口径）：等小捷回到本版发布者手里、且**停在某个版本**时，
+在它的 **0.1.44 这一步**做自举复测（届时我不再需要改名意图文件 —— 直接看 1c 是否把当时的监听状态落盘）。
+
+### 7.3-old 我当时的记录（保留原文，仅作留档，结论已作废）
 
 任务前状态（交办给的 vitals）：0.1.40、`listening=false`、`~/.dsh/agent-room/listening.json` **不存在**、2 个房间。
 **我到达时它已经不是这样了（如实说明）**：实测 `room=0.1.43 listening=true`，意图文件**已存在**
@@ -345,8 +414,12 @@ AUTO_WAKE_EXIT=0
   （seq 2942 / 3089）并在结束后发结果（seq 3148，`confirmedByOwner:true`）；
   小捷**一次**升级/重启（结果 seq 3199）。小黄的多轮重启见 §7.1 的如实说明。
 - **没有碰小麦**（D-29：它那台 `powershell.exe` 从 exec 平面与计划任务两头被拒，需要人在交互控制台里跑；
-  本会话**没有**做任何绕过尝试——小捷那台实测 `powershell.exe` **可以**从 exec 平面启动
-  （`cmd → powershell.exe -Command exit 0` = `status=0`），所以两台机器的封锁条件确实不同）。
+  本会话**没有**做任何绕过尝试）。
+- **【事后更正】** 我**动过小捷**（0.1.44 升级 + 意图文件改名 + 手工补跑 9b/9c），
+  而它随后被划归另一个 worker 负责 0.1.43 步骤 ⇒ **那台机器上的操作属越界**，证据已作废（§7.3）。
+  纪律：**在多 worker 同时作业的夜里，"这台机器属于谁"必须在动手前确认**，
+  而当时的交办明确把这台划给了我 —— 冲突本身要在**交办层**解决，动手方要保留"何时接到归属变更"的时刻。
+  那台机器上我**没有**做过任何 kill、没有重启过服务、也没有删除任何文件（意图文件是**改名**，旧字节在盘上）。
 - **没有重启本机服务**（硬约束）。
 - **没有手工删除任何房间记录 / 意图文件**（小捷的意图文件是**改名**备份，旧字节仍在盘上）。
 
@@ -432,11 +505,12 @@ node "$repo\build.mjs"
    在小婷那台它还是"无人帮助"的证明，但更普遍地它意味着**升级脚本的完整成功路径在两台机器上都没走完**，
    我是**手工**把 9b/9c 补跑出来的（§7.3）。锁的持有者是**旧 cmd 包装进程**，不是 dsh 本身；
    清锁属于"重启动作"，本轮没有做（D-31 纪律：动进程前先确认身份与看门狗）。
-3. **1c 的"首次升级自举"已在小捷上拿到真机证据（§7.3），但仍有一条不干净的地方**：我到达时它**已经是 0.1.43
-   且已有意图文件**（有人先跑过一轮带 1c 的升级），所以我是**手工把意图文件挪走**来重建"没有意图文件"的起点，
-   而不是观察一台**真的旧版本**机器第一次升级。差异在于：**0.1.40 的 `state` 是否也带 `listening` 字段**
-   这一条没有被真机验证过（本机 stub 只证明了 helper 对任意 state 形状的行为）。
-   要彻底闭掉它，需要一台跑着 0.1.40、监听开着、且磁盘上没有意图文件的机器——按现在的口径那是小麦，而它**不由我**动。
+3. **1c 的"首次升级自举"在真机上【未验证】**（小捷那一轮的证据已作废，见 §7.3：那台机器在 0.1.43 步骤上
+   已归属另一个 worker，我不该动它）。现有证据只有 stub 级与静态级：helper 对任意 `state` 形状的行为
+   （`_test-listening-capture-0144.cjs` 用例 A/B）、两个平台内嵌 helper 逐字节相同、1c 恰好一次、1c 位于
+   "Stop dsh web / Install" 之前、9c 真的传了 `--before-file`。**合格样本**是"跑着旧版本且磁盘上没有意图文件"的机器
+   —— 按现在的口径那是小麦，而它不由本版发布者动。**特别是"0.1.40 的 `/state` 是否带 `listening` 字段"从未在真机验证过** ✗，
+   这一条不成立的话，1c 在 0.1.40 上会捕获到空集合（会打印 `NO room is listening ...` 而不是撒谎，但不能算自举成功）。
 4. **`listening-capture.cjs` 的 CLI 入口在小捷上是脚本内嵌版跑的**（步骤 1c 本身就是 CLI 调用，`exit 0` + 写出两个文件）；
    但**独立文件**那份只在本机 PowerShell 里直跑验过（`D:\dsh\_fix-d28\cli-capture.txt` / `cli-autowake.txt`）。
    本会话沙箱**禁止** Node 子进程用管道 stdio（实测 `spawnSync` → `EPERM`），
