@@ -212,6 +212,41 @@ export interface ActivationStats {
   resolvedViaNone: number;
   /** 1 when the most recent resolution produced a resident agent, 0 when it did not. */
   lastResidentOk: number;
+  /* ------------- 0.1.48: can the resolved agent actually RUN A TURN? -------------
+   * THE ROOT CAUSE (measured on 小黄/小婷 and reproducible on any machine whose `dsh web`
+   * runs with cwd = the profile directory): the duty session was spawned with EMPTY
+   * `agentOptions`, i.e. **no provider/model**. The harness refuses to propose a request for
+   * such an agent — `dsh-agent-loop/lib/index.js:714`:
+   *     if (!proposedConfig.provider || !proposedConfig.model) throw new Error(`agent "…" has
+   *     no provider/model: set AgentOptions.provider and AgentOptions.model …`);
+   * and `kick()` (`:481-490`) swallows that throw (`catch (_error) {}`). Net effect: the wake
+   * is handed over, `followup accepted` prints, and NOTHING EVER RUNS — with no error
+   * anywhere. `residentNoModel` is that fact as a number.
+   */
+  /** Resolutions that produced an agent which can really run a turn (provider+model). */
+  residentExecutable: number;
+  /** Resolutions that produced an agent with NO provider/model: the turn cannot run. */
+  residentNoModel: number;
+  /** Times a model selection was supplied to a session that had none (mirror / persisted /
+   *  host default). A climbing value on a machine that used to be silent is the FIX working. */
+  executabilityRepairs: number;
+  /** Repairs attempted and refused (no selection available from any source). */
+  executabilityRepairFailed: number;
+  /* ------------- turn errors observed on the resident agent (swallowed by the harness) ------------- */
+  /** `agent/error` events seen on a resident agent — the only way a swallowed turn failure
+   *  becomes visible at all (`throwError` emits it, `kick()` then discards the error). */
+  turnErrors: number;
+  /** Of those, the "has no provider/model" family — the duty-session defect itself. */
+  turnErrorsNoModel: number;
+  /** This node's own `[org:*]` / `[ack]` frames seen while a wake was in flight. These were
+   *  misread as "the agent replied" TWICE on two machines (D-37), so they are counted and
+   *  named instead of being silently indistinguishable from real output. */
+  controlFramesIgnored: number;
+  /** Sessions this plugin created through the HOST's own session API, because the machine had
+   *  no model source at all (0.1.48 last mile). That session is the one that can really run. */
+  hostSessionsCreated: number;
+  /** Attempts of that which failed (host refused, unreachable, or returned no session id). */
+  hostSessionCreateFailed: number;
   /* ------------------------------ the chain, step by step ------------------------------ */
   /** Dispatches that demonstrably started a turn inside the start window (any evidence). */
   started: number;
@@ -258,6 +293,15 @@ export class WakeActivation {
   private duplicateDispatchCount = 0;
   private followupRefusedCount = 0;
   private noResidentAgentCount = 0;
+  private residentExecutableCount = 0;
+  private residentNoModelCount = 0;
+  private executabilityRepairCount = 0;
+  private executabilityRepairFailedCount = 0;
+  private turnErrorCount = 0;
+  private turnErrorNoModelCount = 0;
+  private controlFrameIgnoredCount = 0;
+  private hostSessionCreatedCount = 0;
+  private hostSessionCreateFailedCount = 0;
   private residentResolvedCount = 0;
   private lastResidentOk = 0;
   private readonly viaCount: Record<ResidentPath, number> = {
@@ -373,6 +417,41 @@ export class WakeActivation {
    */
   noteNoResident(): void {
     this.noResidentAgentCount += 1;
+  }
+
+  /** Did the resolved resident agent come back able to run a turn (provider+model)? */
+  noteResidentExecutability(executable: boolean): void {
+    if (executable) this.residentExecutableCount += 1;
+    else this.residentNoModelCount += 1;
+  }
+
+  /** A model selection was supplied to a session that had none (see the header). */
+  noteExecutabilityRepair(ok: boolean): void {
+    if (ok) this.executabilityRepairCount += 1;
+    else this.executabilityRepairFailedCount += 1;
+  }
+
+  /**
+   * A turn error surfaced on a resident agent (0.1.48).
+   *
+   * This is the signal that did not exist before: the harness emits `agent/error` and then
+   * DISCARDS the error (`dsh-agent-loop/lib/index.js:467-490`), so a duty session without a
+   * model failed silently for hours on two machines.
+   */
+  noteTurnError(noModel: boolean): void {
+    this.turnErrorCount += 1;
+    if (noModel) this.turnErrorNoModelCount += 1;
+  }
+
+  /** Count one of our OWN machine frames that must never be mistaken for agent output. */
+  noteControlFrameIgnored(): void {
+    this.controlFrameIgnoredCount += 1;
+  }
+
+  /** One host-API session creation attempt (0.1.48 last mile): did the host hand back a session? */
+  noteHostSessionCreated(ok: boolean): void {
+    if (ok) this.hostSessionCreatedCount += 1;
+    else this.hostSessionCreateFailedCount += 1;
   }
 
   /** One local evidence that the turn started. First evidence wins; later ones are ignored
@@ -521,6 +600,15 @@ export class WakeActivation {
       resolvedViaHeuristic: this.viaCount.heuristic,
       resolvedViaNone: this.viaCount.none,
       lastResidentOk: this.lastResidentOk,
+      residentExecutable: this.residentExecutableCount,
+      residentNoModel: this.residentNoModelCount,
+      executabilityRepairs: this.executabilityRepairCount,
+      executabilityRepairFailed: this.executabilityRepairFailedCount,
+      turnErrors: this.turnErrorCount,
+      turnErrorsNoModel: this.turnErrorNoModelCount,
+      controlFramesIgnored: this.controlFrameIgnoredCount,
+      hostSessionsCreated: this.hostSessionCreatedCount,
+      hostSessionCreateFailed: this.hostSessionCreateFailedCount,
       started: this.startedCount,
       startedByStatus: this.startedByStatusCount,
       startedByTranscript: this.startedByTranscriptCount,
