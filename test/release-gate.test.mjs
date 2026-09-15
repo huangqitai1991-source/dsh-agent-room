@@ -98,6 +98,42 @@ function evidenceObject(extra = {}) {
   };
 }
 
+/**
+ * Write a machine-facts file for the fixture's canary -- the measured facts D-45 judges on.
+ *
+ * `installMtime` and `libMtime` are BOTH written on purpose: installMtime is the package-directory
+ * time (the one that means something) while libMtime carries the value npm puts on every file it
+ * packs (1985-10-26, measured on a real node as 499162500). The gate must use installMtime, and the
+ * dedicated test file asserts that a facts row whose libMtime is the 1985 constant still works.
+ *
+ * By default the machine's own hand-written version file is moved to the same version: a hand-typed
+ * fact that AGREES is simply not needed, while one that disagrees must refuse (card-13 §B3 step 7).
+ */
+function writeFacts(dir, {
+  version = TARGET, machine = "mai", ageSec = 0, ack = true, activation = true,
+  loadedAfterDisk = true, unreachable = null, pluginVersion = null, agreeVersionFile = true,
+  installMtime = 1_800_000_000, hostStart = 1_800_000_100,
+} = {}) {
+  const factsPath = join(dir, "machine-facts.json");
+  const probedAt = new Date(Date.now() - ageSec * 1000).toISOString();
+  const row = unreachable
+    ? { id: machine, via: "fixture", unreachable }
+    : {
+      id: machine, via: "fixture", pluginVersion: pluginVersion ?? version,
+      installPath: "C:\\fixture\\dsh-agent-room", installKind: "dir",
+      libHash: "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+      libMtime: 499162500, pkgDirMtime: installMtime, installMtime,
+      hostPid: 4242, now: Math.floor(Date.now() / 1000), etimeSec: Math.max(0, Math.floor(Date.now() / 1000) - hostStart),
+      hostStart, loadedAfterDisk, shape: { ack, activation }, stateOk: true, stateBytes: 4242,
+      raw: "ROOMFACTS v1\nfixture", rawMd5: "fixture",
+    };
+  writeFileSync(factsPath, JSON.stringify({
+    schema: "room-machine-facts/1", probedAt, probedBy: "fixture", source: "fixture", mode: "fixture", machines: [row],
+  }, null, 2));
+  if (agreeVersionFile && !unreachable) writeFileSync(join(dir, "machines", machine, "version"), `${pluginVersion ?? version}\n`);
+  return factsPath;
+}
+
 function makeFixture(name) {
   const dir = join(FIXTURE_ROOT, name);
   rmSync(dir, { recursive: true, force: true });
@@ -433,36 +469,33 @@ guarded("gate 3: acceptance of a DIFFERENT version does not count for this one",
 });
 
 /* ================================================================= test 4 */
-/* gate 4: canary first, and only one machine */
+/* gate 4: the canary is judged on MEASURED facts (D-45), and the gate is READ-ONLY */
 
-guarded("gate 4: a canary that cannot be put on the target version is REFUSED and the fleet stays untouched", () => {
+guarded("gate 4: a canary measured to be RUNNING an older version is REFUSED, and nothing on the machine moves", () => {
   needGate("the canary gate must be able to refuse");
   const f = makeFixture("canary-stale");
-  // no upgrade command is configured: the gate must refuse by name instead of pretending it can
-  // carry the canary forward, and the canary's own version file must not move.
-  const cfg = JSON.parse(readFileSync(f.config, "utf8"));
-  delete cfg.machines[0].upgrade;
-  writeFileSync(f.config, JSON.stringify(cfg, null, 2));
-
-  const r = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger], f.env);
-  assert.strictEqual(r.exit, 1,
-    `canary ${f.dir} version file reads ${JSON.stringify(readFileSync(f.versionFile, "utf8"))}: ${r.out}`);
+  const facts = writeFacts(f.dir, { version: OLD });   // measured: this machine runs 0.1.50, target is 0.1.51
+  const r = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger, "--facts", facts], f.env);
+  assert.strictEqual(r.exit, 1, r.out);
   assert.match(r.out, /RELEASE GATE canary REFUSED/);
-  assert.match(r.out, new RegExp(`canary mai is on ${OLD.replace(/\./g, "\\.")}, not the target`));
-  assert.match(r.out, /no canary upgrade command is configured/);
-  assert.match(r.out, /the fleet stays untouched/);
-  assert.strictEqual(readFileSync(f.versionFile, "utf8").trim(), OLD);
+  assert.match(r.out, /is RUNNING 0\.1\.50, not the target 0\.1\.51/);
+  assert.match(r.out, /this gate never installs anything/);
+  assert.strictEqual(readFileSync(f.versionFile, "utf8").trim(), OLD, "a refusal may not move the machine's own version file");
   assert.strictEqual(ledgerLines(f.ledger).filter((r2) => r2.verdict === "canary_passed").length, 0);
 });
 
-guarded("gate 4: a configured canary upgrade puts the canary on the target, and its verification is what gates the fleet", () => {
-  needGate("the canary gate must run the post-upgrade verification");
+guarded("gate 4: fresh facts on the target version with the live shape allow the canary, and the fleet follows", () => {
+  needGate("the canary gate must be able to allow");
   const f = makeFixture("canary-compliant");
   f.writeConfig(f.scripts.verifyOk);
-  const r = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger], f.env);
+  const facts = writeFacts(f.dir, { version: TARGET });
+  const r = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger, "--facts", facts], f.env);
   assert.strictEqual(r.exit, 0, r.out);
-  assert.match(r.out, /RELEASE GATE canary ALLOWED: canary mai is on 0\.1\.51 and its post-upgrade verification passed/);
-  assert.strictEqual(readFileSync(f.versionFile, "utf8").trim(), TARGET);
+  assert.match(r.out, /RELEASE GATE canary ALLOWED: canary mai is RUNNING 0\.1\.51/);
+  assert.match(r.out, /hostStarted \d+ >= install time \d+/);
+  assert.match(r.out, /live shape ack\+activation both present/);
+  const passed = ledgerLines(f.ledger).filter((r2) => r2.verdict === "canary_passed");
+  assert.strictEqual(passed.length, 1, "exactly one canary_passed row");
 
   const fleet = runInProcess(["fleet", "--version", TARGET, "--ledger", f.ledger], f.env);
   assert.strictEqual(fleet.exit, 0, fleet.out);
@@ -499,50 +532,37 @@ guarded("gate 4: a --machine that is not the designated canary is REFUSED", () =
 });
 
 /* ================================================================= test 5 */
-/* the rollback path */
+/* the gate is READ-ONLY, and the facts decide */
 
-guarded("gate 4 rollback: a canary failure leaves the canary on the PREVIOUS version and blocks the fleet", () => {
-  needGate("the canary rollback path must exist");
-  const f = makeFixture("canary-rollback");
-  f.writeConfig(f.scripts.verifyBad);          // the upgrade works, the post-upgrade verification fails
-  const r = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger], f.env);
+guarded("gate 4 is READ-ONLY: a configured upgrade/rollback command is NEVER executed, even when the facts allow", () => {
+  needGate("the canary gate must not install, restart or roll anything back");
+  const f = makeFixture("canary-readonly");
+  const sentinel = join(f.dir, "UPGRADE-OR-ROLLBACK-RAN.txt");
+  const cfg = JSON.parse(readFileSync(f.config, "utf8"));
+  const touched = { cmd: process.execPath, args: ["-e", `require('fs').writeFileSync(${JSON.stringify(sentinel)}, 'ran')`] };
+  cfg.machines[0].upgrade = touched;
+  cfg.machines[0].rollback = touched;
+  writeFileSync(f.config, JSON.stringify(cfg, null, 2));
+  const facts = writeFacts(f.dir, { version: TARGET });
 
-  assert.strictEqual(r.exit, 1, r.out);
-  assert.match(r.out, /RELEASE GATE canary REFUSED/);
-  assert.match(r.out, /post-upgrade verification FAILED \(exit 1\)/);
-  assert.match(r.out, /rolled back: mai version file now reads 0\.1\.49/);
-  assert.match(r.out, /the rest of the fleet is refused/);
-
-  const after = readFileSync(f.versionFile, "utf8").trim();
-  assert.strictEqual(after, "0.1.49", `the canary must be back on the rollback target, not ${after}`);
-  assert.notStrictEqual(after, TARGET, "the canary must NOT be left on the failed build");
-
-  const row = ledgerLines(f.ledger).pop();
-  assert.strictEqual(row.gate, "canary_rolled_back");
-  assert.strictEqual(row.verdict, "canary_failed");
-
-  // and the fleet is still refused afterwards: the ledger, not a variable, is the memory
-  const fleet = runInProcess(["fleet", "--version", TARGET, "--ledger", f.ledger], f.env);
-  assert.strictEqual(fleet.exit, 1, fleet.out);
-  assert.match(fleet.out, /RELEASE GATE fleet REFUSED/);
-  assert.match(fleet.out, /the last canary result for 0\.1\.51 is "canary_failed"/);
+  const r = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger, "--facts", facts], f.env);
+  assert.strictEqual(r.exit, 0, r.out);
+  assert.strictEqual(existsSync(sentinel), false,
+    "the gate judged on facts and must have run no install/rollback command at all");
 });
 
-guarded("gate 4 rollback: a canary whose rollback cannot be proven is REFUSED saying so (no fake green)", () => {
-  needGate("the rollback must be verified, not assumed");
-  const f = makeFixture("canary-norollback");
-  // same fixture, but the machine has no rollback command and its verification fails
-  const cfg = JSON.parse(readFileSync(f.config, "utf8"));
-  cfg.machines[0].postUpgradeVerify = { cmd: process.execPath, args: [f.scripts.verifyBad] };
-  delete cfg.machines[0].rollback;
-  writeFileSync(f.config, JSON.stringify(cfg, null, 2));
+guarded("gate 4: facts without the live shape, and facts that are too old, are REFUSED by name", () => {
+  needGate("the shape and the freshness of the facts must both be enforced");
+  const f = makeFixture("canary-shape");
+  const noActivation = writeFacts(f.dir, { version: TARGET, activation: false });
+  const r1 = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger, "--facts", noActivation], f.env);
+  assert.strictEqual(r1.exit, 1, r1.out);
+  assert.match(r1.out, /not showing the live plugin's shape \(ack=true, activation=false\)/);
 
-  const r = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger], f.env);
-  assert.strictEqual(r.exit, 1, r.out);
-  assert.match(r.out, /no rollback command is configured, so the canary was left untouched/);
-  assert.match(r.out, /the rest of the fleet is refused/);
-  assert.strictEqual(readFileSync(f.versionFile, "utf8").trim(), TARGET,
-    "with no rollback configured the canary stays where it is -- the refusal names that instead of pretending");
+  const stale = writeFacts(f.dir, { version: TARGET, ageSec: 3600 });
+  const r2 = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger, "--facts", stale], f.env);
+  assert.strictEqual(r2.exit, 1, r2.out);
+  assert.match(r2.out, /are \d+s old .*older than the 600s maximum/);
 });
 
 /* ================================================================= test 6 */
@@ -633,7 +653,8 @@ guarded("release: all four gates must pass, and the ledger records the release o
     "a refused release must not be recorded as a release");
 
   // 2. canary first, then acceptance by someone else, then the release goes through
-  const canary = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger], f.env);
+  const facts = writeFacts(f.dir, { version: TARGET });
+  const canary = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger, "--facts", facts], f.env);
   assert.strictEqual(canary.exit, 0, canary.out);
   const accept = runInProcess(["accept", "--version", TARGET, "--author", "author", "--accepted-by", "reviewer-x", "--evidence", f.evidence, "--ledger", f.ledger]);
   assert.strictEqual(accept.exit, 0, accept.out);
@@ -745,7 +766,8 @@ guarded("bypass: a bypass releases NOTHING -- the day's budget and the release c
 guarded("fail closed: an unreadable config REFUSES the release even when the ledger says the canary passed", () => {
   needGate("the config must be an INPUT, not an assumption");
   const f = makeFixture("config-unreadable");
-  const canary = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger], f.env);
+  const facts = writeFacts(f.dir, { version: TARGET });
+  const canary = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger, "--facts", facts], f.env);
   assert.strictEqual(canary.exit, 0, canary.out);
   const accept = runInProcess(["accept", "--version", TARGET, "--author", "author", "--accepted-by", "reviewer-x", "--evidence", f.evidence, "--ledger", f.ledger]);
   assert.strictEqual(accept.exit, 0, accept.out);

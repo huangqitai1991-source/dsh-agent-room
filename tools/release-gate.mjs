@@ -20,10 +20,12 @@
  *   3. acceptance     refuse unless the ledger records acceptance by SOMEONE OTHER THAN THE
  *                     AUTHOR, with who / when / evidence path / verdict. Author self-acceptance
  *                     is rejected outright.
- *   4. canary         refuse unless the designated canary machine really is on the target
- *                     version AND its post-upgrade verification passed. On failure the gate runs
- *                     the rollback, proves the canary is no longer on the target version, and
- *                     refuses the rest of the fleet with the reason named.
+ *   4. canary         refuse unless the designated canary machine was MEASURED, recently, to be
+ *                     RUNNING the target version with the live plugin's shape and to have loaded
+ *                     the bytes now on its disk. The facts come from `tools/machine-facts.mjs`
+ *                     (`--facts <file>`, default max age 600 s); a hand-written version file may
+ *                     only REFUSE, never allow. This gate installs, restarts and rolls back
+ *                     NOTHING: the operator puts the canary on the target, re-probes, then runs it.
  *
  * EXPLICIT BYPASS -- ONE MORE GATE, AND IT IS A RECORD RATHER THAN A CHECK
  *   Until 0.1.51 these four gates ran only when the caller asked for them (-ReleaseGate). A gate
@@ -78,6 +80,7 @@ import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { userInfo } from "node:os";
+import { loadFacts, SCHEMA as FACTS_SCHEMA } from "./machine-facts.mjs";
 
 let runSeq = 0;
 
@@ -87,6 +90,8 @@ export const EXIT_ERROR = 2;
 
 export const DEFAULT_LEDGER = "D:\\dsh\\release-ledger.jsonl";
 export const DEFAULT_CONFIG = "D:\\dsh\\release-gate.config.json";
+/** A facts file older than this may not carry a release. 600 s = the exec plane's 30 s limit x 20. */
+export const DEFAULT_FACTS_MAX_AGE_SEC = 600;
 
 /** The house evidence pattern, in BOTH field orders (the numbers may be reported either way). */
 const ASSERTION_NEW_FIRST =
@@ -101,7 +106,8 @@ const USAGE = [
   "  version-count --version <v> [--max <n>] [--override --reason <why>]",
   "  evidence      --version <v> --evidence <file> [--author <who>]",
   "  acceptance    --version <v> --author <who>",
-  "  canary        --version <v> --machine <id> [--config <file>] [--expect-version <v>]",
+  "  canary        --version <v> --facts <file> [--machine <id>] [--config <file>]",
+  "                [--facts-max-age-sec <n>] [--expect-version <v>]   (never installs anything)",
   "  fleet         --version <v> [--machine <id>]",
   "  release       --version <v> --evidence <file> --author <who> [--max <n>] [--override --reason <why>]",
   "  accept        --version <v> --accepted-by <who> --author <who> --evidence <file> [--verdict <v>]",
@@ -226,12 +232,12 @@ function parseArgs(argv) {
     gate: null, version: null, evidence: null, author: null, actor: null, reason: null,
     max: null, override: false, machine: null, config: null, ledger: null, acceptedBy: null,
     verdict: null, expectVersion: null, json: false, quiet: false, allowDowngrade: false,
-    hours: null, fixtures: null,
+    hours: null, fixtures: null, facts: null, factsMaxAgeSec: null,
   };
   const takesValue = new Set([
     "--version", "--evidence", "--author", "--actor", "--reason", "--max", "--machine",
     "--config", "--ledger", "--accepted-by", "--verdict", "--expect-version", "--hours",
-    "--fixtures",
+    "--fixtures", "--facts", "--facts-max-age-sec",
   ]);
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
@@ -244,7 +250,7 @@ function parseArgs(argv) {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith("--")) return { error: `${a} needs a value` };
       i += 1;
-      const key = { "--version": "version", "--evidence": "evidence", "--author": "author", "--actor": "actor", "--reason": "reason", "--max": "max", "--machine": "machine", "--config": "config", "--ledger": "ledger", "--accepted-by": "acceptedBy", "--verdict": "verdict", "--expect-version": "expectVersion", "--hours": "hours", "--fixtures": "fixtures" }[a];
+      const key = { "--version": "version", "--evidence": "evidence", "--author": "author", "--actor": "actor", "--reason": "reason", "--max": "max", "--machine": "machine", "--config": "config", "--ledger": "ledger", "--accepted-by": "acceptedBy", "--verdict": "verdict", "--expect-version": "expectVersion", "--hours": "hours", "--fixtures": "fixtures", "--facts": "facts", "--facts-max-age-sec": "factsMaxAgeSec" }[a];
       out[key] = v;
       continue;
     }
@@ -256,6 +262,11 @@ function parseArgs(argv) {
     const n = Number(out.max);
     if (!Number.isInteger(n) || n < 0) return { error: `--max must be a non-negative integer, got ${out.max}` };
     out.max = n;
+  }
+  if (out.factsMaxAgeSec !== null) {
+    const n = Number(out.factsMaxAgeSec);
+    if (!Number.isInteger(n) || n < 0) return { error: `--facts-max-age-sec must be a non-negative integer, got ${out.factsMaxAgeSec}` };
+    out.factsMaxAgeSec = n;
   }
   return out;
 }
@@ -502,86 +513,138 @@ export function gateCanary({ args, config, ledger, ts }) {
     return { verdict: "refused", missing: `machine ${designated} is not in the config's machine list` };
   }
   const expect = args.expectVersion;
-  if (machine.version === null) {
-    return { verdict: "refused", machine: designated, missing: `the canary ${designated} has no readable version (${machine.readError})` };
-  }
-
-  const { upgrade, verify, rollback } = canaryCommands(config, machine, version, null);
+  // A hand-typed version file may only ever REFUSE (card-13 §B3 step 7). It is read here as the
+  // cross-check, never as the source of truth: the truth is what the machine was measured to run.
+  const legacyVersion = machine.version;
+  const { verify } = canaryCommands(config, machine, version, null);
   const env = { ...process.env, ...(args.fixtures ? { DSH_RELEASE_FIXTURES: args.fixtures } : {}) };
+
+  /* ---- THE FACTS, FIRST (card-13 §B3): every step below can only REFUSE ---- */
+  const judged = judgeCanaryFacts({
+    factsPath: args.facts ? resolve(args.facts) : null,
+    designated,
+    maxAgeSec: args.factsMaxAgeSec ?? DEFAULT_FACTS_MAX_AGE_SEC,
+    ts,
+    version,
+    expect,
+    legacyVersion,
+  });
+  if (judged.verdict === "refused") {
+    return { ...judged, machine: designated, canaryVersion: judged.probedVersion ?? legacyVersion };
+  }
+
+  /* ---- phase 2: THE OPERATOR'S OWN VERIFICATION, WHEN THEY HAVE ONE ---- */
   if (!verify) {
-    return { verdict: "refused", machine: designated, missing: `no post-upgrade verification command is configured for ${designated} (config.machines[].postUpgradeVerify)` };
+    return { ...judged, machine: designated, canaryVersion: judged.probedVersion, upgraded: false };
   }
-
-  /* ---- phase 1: THE CANARY GOES FIRST, AND ALONE ---- */
-  let upgradeRun = null;
-  if (machine.version !== version) {
-    if (!upgrade) {
-      return {
-        verdict: "refused", machine: designated, canaryVersion: machine.version,
-        missing: `the canary ${designated} is on ${machine.version}, not the target ${version}` +
-          (expect ? ` (expected ${expect})` : "") + ", and no canary upgrade command is configured " +
-          "(config.machines[].upgrade) - the fleet stays untouched",
-      };
-    }
-    upgradeRun = execResolved(upgrade, { env });
-    const afterUpgrade = machineRecord(config, designated);
-    if (upgradeRun.status !== 0 || afterUpgrade.version !== version) {
-      const why = upgradeRun.status !== 0
-        ? `the canary upgrade command exited ${upgradeRun.status}`
-        : `the canary upgrade command exited 0 but ${designated} still reads ${afterUpgrade.version}`;
-      const rollbackReason = rollbackCanary(rollback, config, designated, version, env);
-      return {
-        verdict: "refused", machine: designated, canaryVersion: rollbackReason.version, rolledBack: rollbackReason.rolledBack,
-        missing: `cannot put the canary on the target: ${why}; ${rollbackReason.text}; the rest of the fleet is refused`,
-        detail: rollbackReason.text,
-      };
-    }
-  }
-
-  /* ---- phase 2: THE POST-UPGRADE VERIFICATION ON THE LIVE CANARY ---- */
   const verifyRun = execResolved(verify, { env });
   const verifyOut = ((verifyRun.stdout ?? "") + (verifyRun.stderr ?? "")).trim();
-
   if (verifyRun.ok) {
     return {
-      verdict: "allowed", machine: designated, canaryVersion: version,
-      detail: `canary ${designated} is on ${version} and its post-upgrade verification passed` +
+      ...judged,
+      machine: designated,
+      canaryVersion: judged.probedVersion,
+      detail: judged.detail + `; the operator's verification passed` +
         (verifyOut ? ` (${verifyOut.split(/\r?\n/).filter(Boolean).slice(-1)[0]})` : ""),
-      verifyOut, upgraded: upgradeRun !== null,
+      verifyOut,
+      upgraded: false,
     };
   }
-
-  /* ---- phase 3: failure -- stop, roll the canary back, PROVE it, refuse the fleet ---- */
-  const failReason = `canary ${designated} post-upgrade verification FAILED (exit ${verifyRun.status})` +
-    (verifyOut ? `: ${verifyOut.split(/\r?\n/).filter(Boolean).slice(-1)[0]}` : "");
-  const rb = rollbackCanary(rollback, config, designated, version, env);
+  /* ---- phase 3: failure -- refuse, and DO NOT touch the machine ---- */
   return {
     verdict: "refused",
     machine: designated,
-    canaryVersion: rb.version,
-    rolledBack: rb.rolledBack,
+    canaryVersion: judged.probedVersion,
     verifyOut,
-    missing: `${failReason}; ${rb.text}; the rest of the fleet is refused`,
-    detail: rb.text,
+    missing: `canary ${designated} verification FAILED (exit ${verifyRun.status})` +
+      (verifyOut ? `: ${verifyOut.split(/\r?\n/).filter(Boolean).slice(-1)[0]}` : "") +
+      `; the rest of the fleet is refused. This tool does not install, restart or roll back anything: ` +
+      `the machine is left exactly as it was found`,
   };
 }
 
-/** Roll the canary back (when configured) and read the machine's OWN version file again. */
-function rollbackCanary(rollback, config, designated, version, env) {
-  if (!rollback) {
-    const rec = machineRecord(config, designated);
-    return { rolledBack: false, version: rec.version, text: "no rollback command is configured, so the canary was left untouched" };
+/**
+ * The facts judgement (card-13 §B3). Ordered, and every step can only REFUSE -- the message names
+ * the FIRST thing that is missing, so a refusal is actionable instead of a verdict.
+ *
+ * WHY MEASURED FACTS AND NOT A VERSION FILE: the version file this gate used to read was written by
+ * hand (and in production the directory it pointed at did not even exist), so the gate either
+ * refused forever or could be satisfied by TYPING the answer. A machine's own load order cannot be
+ * typed: `loadedAfterDisk` compares the host process start against the newest byte under lib/, which
+ * is precisely the difference D-42 was made of -- the disk was new while the process still ran the
+ * old plugin.
+ */
+export function judgeCanaryFacts({ factsPath, designated, maxAgeSec = DEFAULT_FACTS_MAX_AGE_SEC, ts, version, expect = null, legacyVersion = null }) {
+  if (!factsPath) {
+    return { verdict: "refused", missing:
+      "no --facts file was given: the canary is judged on MEASURED facts (tools/machine-facts.mjs), " +
+      "never on a hand-written version file" };
   }
-  const run = execResolved(rollback, { env });
-  const rec = machineRecord(config, designated);
-  const rolledBack = rec.version !== version;
+  const loaded = loadFacts(factsPath);
+  if (loaded.error) return { verdict: "refused", missing: loaded.error };
+  const facts = loaded.facts;
+  if (facts.schema !== FACTS_SCHEMA) {
+    return { verdict: "refused", missing:
+      `${factsPath} declares schema ${JSON.stringify(facts.schema)} instead of ${FACTS_SCHEMA}; ` +
+      `facts this gate cannot read are not facts it may act on` };
+  }
+  const probedAt = Date.parse(String(facts.probedAt ?? ""));
+  if (!Number.isFinite(probedAt)) {
+    return { verdict: "refused", missing: `the facts in ${factsPath} carry an unreadable probedAt (${JSON.stringify(facts.probedAt)})` };
+  }
+  const nowMs = Date.parse(String(ts ?? ""));
+  const ageSec = Number.isFinite(nowMs) ? Math.max(0, Math.round((nowMs - probedAt) / 1000)) : null;
+  if (ageSec === null) {
+    return { verdict: "refused", missing: `the gate has no usable timestamp to age the facts against (${JSON.stringify(ts)})` };
+  }
+  if (ageSec > maxAgeSec) {
+    return { verdict: "refused", probedAt: facts.probedAt, ageSec, missing:
+      `the facts in ${factsPath} are ${ageSec}s old (probed ${facts.probedAt}), which is older than the ` +
+      `${maxAgeSec}s maximum; re-probe the canary and try again` };
+  }
+  const rows = Array.isArray(facts.machines) ? facts.machines : [];
+  const row = rows.find((r) => r && r.id === designated) ?? null;
+  if (!row) {
+    return { verdict: "refused", ageSec, missing:
+      `the facts in ${factsPath} have no row for the designated canary ${designated} ` +
+      `(rows: ${rows.map((r) => r && r.id).filter(Boolean).join(", ") || "none"})` };
+  }
+  if (row.unreachable) {
+    return { verdict: "refused", ageSec, missing: `the canary ${designated} could NOT be probed: ${row.unreachable}` };
+  }
+  if (row.shape?.ack !== true || row.shape?.activation !== true) {
+    return { verdict: "refused", probedVersion: row.pluginVersion, ageSec, missing:
+      `the canary ${designated} is not showing the live plugin's shape ` +
+      `(ack=${row.shape?.ack === true}, activation=${row.shape?.activation === true}); ` +
+      `a machine whose own /state does not carry both blocks is not a machine this gate can certify` };
+  }
+  if (row.loadedAfterDisk !== true) {
+    return { verdict: "refused", probedVersion: row.pluginVersion, ageSec, missing:
+      `the canary ${designated} did not load the bytes on its disk: hostStart=${row.hostStart} is not at or after ` +
+      `the install time=${row.installMtime}` + (row.hostStart === null ? " (hostStart is not readable)" : "") +
+      `. This is D-42: the upgrade reported success, the disk was new, and the running process was still the old build` };
+  }
+  if (row.pluginVersion !== version) {
+    return { verdict: "refused", probedVersion: row.pluginVersion, ageSec, missing:
+      `the canary ${designated} is RUNNING ${row.pluginVersion}, not the target ${version}` +
+      (expect ? ` (expected ${expect})` : "") +
+      `. Install the target on the canary, re-probe it, then run this gate again -- this gate never installs anything` };
+  }
+  if (legacyVersion !== null && legacyVersion !== undefined && String(legacyVersion).trim() !== "" && String(legacyVersion).trim() !== row.pluginVersion) {
+    return { verdict: "refused", probedVersion: row.pluginVersion, ageSec, missing:
+      `the hand-written version file for ${designated} says ${JSON.stringify(String(legacyVersion).trim())} while the machine ` +
+      `was measured RUNNING ${row.pluginVersion}; a hand-typed fact that disagrees with the measurement is refused` };
+  }
   return {
-    rolledBack,
-    version: rec.version,
-    run,
-    text: rolledBack
-      ? `rolled back: ${designated} version file now reads ${rec.version} (was ${version}), rollback exit ${run.status}`
-      : `ROLLBACK DID NOT LAND: ${designated} version file still reads ${rec.version}`,
+    verdict: "allowed",
+    probedVersion: row.pluginVersion,
+    ageSec,
+    detail:
+      `canary ${designated} is RUNNING ${row.pluginVersion} (measured ${ageSec}s ago): pid ${row.hostPid}, ` +
+      `hostStarted ${row.hostStart} >= install time ${row.installMtime} (package dir; file mtimes are ` +
+      `npm-normalised to 1985 and cannot be used), libHash ${row.libHash}, ` +
+      `live shape ack+activation both present` +
+      (legacyVersion ? `, hand-written file agrees (${String(legacyVersion).trim()}) and was not needed` : ""),
   };
 }
 
