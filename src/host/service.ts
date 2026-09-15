@@ -23,6 +23,8 @@ import { OutboundHub, OWNER_CONFIRM_WAIT_MS, toDeliveryStatus } from "./outbound
 import { DeliveryDedupe, MAX_DEDUPE_ROOMS, MAX_DEDUPE_SEQS_PER_ROOM } from "./dedupe.js";
 import { decideListenWake, listenAuthorKind, MAX_NAMED_DENIALS_PER_SWEEP, MAX_WAKE_ROOMS, WAKE_WINDOW_ROWS, WakeWatermark, wakeKindLabel } from "./wake.js";
 import type { WakeDecision, WakePreview, WakeReason, WakeRuleSelf } from "./wake.js";
+import { ACK_RATE_LIMIT_MS, ACK_WINDOW_MS, AckLedger, formatAckMiss, formatAckReceipt, isAckPlaneFrame, MAX_ACK_ROOMS } from "./ack.js";
+import type { AckRefusal } from "./ack.js";
 import { DEFAULT_PORT } from "./protocol.js";
 import type { RoomBeacon } from "./protocol.js";
 import { nowIso } from "./util.js";
@@ -209,6 +211,20 @@ export class AgentRoomService extends Service {
   private readonly wakeWatermark = new WakeWatermark(
     MAX_WAKE_ROOMS,
     (message) => this.warnRateLimited("wake-rooms", message),
+  );
+  /**
+   * ACK plane (0.1.46): the receipt that says "the dispatch ARRIVED at this machine and
+   * a resident agent was handed it" — as opposed to 0.1.45's `woken`, which is a rule
+   * PREDICTION computed on the sender's own room view and counts dispatches, not
+   * deliveries. Both roles live in this one ledger, because every node is both a target
+   * (`receipts*`) and a sender (`dispatches` / `ackedTargets` / `unackedTargets`).
+   * See src/host/ack.ts for the measured failure this exists to end.
+   */
+  private readonly ackLedger = new AckLedger(
+    MAX_ACK_ROOMS,
+    ACK_RATE_LIMIT_MS,
+    ACK_WINDOW_MS,
+    (message) => this.warnRateLimited("ack-rooms", message),
   );
   /** Rooms with a listening wake currently in flight (skip until it settles). */
   private readonly listenPending = new Set<string>();
@@ -1175,10 +1191,26 @@ export class AgentRoomService extends Service {
   ): WakePreview {
     const note =
       "0.1.45 rule-predicted from THIS node's room view: a target that is offline, or that has " +
-      "listening OFF, will not actually wake — read woken:0 as 'this post addresses nobody'";
+      "listening OFF, will not actually wake — read woken:0 as 'this post addresses nobody'. " +
+      "0.1.46: the RECEIPT for this prediction is `ack.{ackedTargets,unackedTargets}` in /state " +
+      "plus one `[ack] <target> 已接手 seq=N` line per machine that really took it";
+    const hits = this.wakeTargetsFor(roomId, input);
+    return { woken: hits.length, targets: hits.map((h) => h.agentId), reasons: hits.map((h) => h.reason), note };
+  }
+
+  /**
+   * Who does this post address, per the SAME rule the receivers run? One implementation,
+   * two callers (`wakePreviewFor` for the sender's `woken` count, `registerAckExpectation`
+   * for the receipt tracking), so the prediction and the thing it is checked against can
+   * never disagree about WHO was addressed.
+   */
+  private wakeTargetsFor(
+    roomId: string,
+    input: { text: string; mentions?: string[]; human?: boolean },
+  ): Array<{ agentId: string; nickname: string; reason: WakeReason }> {
     const identity = this.roomService.getIdentity();
     const room = this.roomService.getOwnedRoom(roomId) ?? this.clients.get(roomId)?.snapshot?.room;
-    if (!identity || !room) return { woken: 0, targets: [], reasons: [], note };
+    if (!identity || !room) return [];
     // The message as the rule would see it once the owner stores it: the author is
     // THIS node, and `mentions` may still be nicknames (the owner resolves them).
     const message = {
@@ -1188,8 +1220,7 @@ export class AgentRoomService extends Service {
       from: identity.agentId,
       fromNickname: identity.nickname,
     };
-    const targets: string[] = [];
-    const reasons: WakeReason[] = [];
+    const hits: Array<{ agentId: string; nickname: string; reason: WakeReason }> = [];
     for (const member of room.members ?? []) {
       // Card ④ by construction: the author is never one of its own targets. The
       // rule would deny it anyway (`self-authored`); skipping here keeps the
@@ -1199,12 +1230,38 @@ export class AgentRoomService extends Service {
         message,
         self: { agentId: member.agentId, nickname: member.nickname },
       });
-      if (decision.wake) {
-        targets.push(member.agentId);
-        reasons.push(decision.reason);
-      }
+      if (decision.wake) hits.push({ agentId: member.agentId, nickname: member.nickname, reason: decision.reason });
     }
-    return { woken: targets.length, targets, reasons, note };
+    return hits;
+  }
+
+  /**
+   * Open a sender expectation so this node can tell "arrived at a machine" from
+   * "dispatched" (0.1.46 requirement 3/4).
+   *
+   * Called from the ONE place every send path funnels through (`gateway.sendChat`, used
+   * by `POST /rooms/<id>/chat` and by the `room_send` tool), i.e. it cannot be forgotten
+   * by a new caller. Registered only when the post has a real owner-assigned seq AND the
+   * rule predicted at least one target — an unaddressed post has nobody to receipt, and a
+   * still-queued frame carries a NEGATIVE local seq that no receipt could ever match.
+   */
+  private registerAckExpectation(
+    roomId: string,
+    input: { text: string; mentions?: string[]; human?: boolean },
+    seq: number | undefined,
+  ): void {
+    if (typeof seq !== "number" || !Number.isSafeInteger(seq) || seq <= 0) return;
+    const targets = this.wakeTargetsFor(roomId, input);
+    if (targets.length === 0) return;
+    const opened = this.ackLedger.expect(roomId, seq, targets);
+    if (!opened) {
+      this.diag("ack: expectation for seq=" + seq + " in " + roomId + " NOT tracked (cap or no targets)");
+      return;
+    }
+    this.diag(
+      "ack: expecting receipts for seq=" + seq + " in " + roomId + " from " +
+        targets.map((t) => t.nickname).join("/") + " (window=" + ACK_WINDOW_MS + "ms)",
+    );
   }
 
   /** Wake the resident agent for a message that passed the rule layer. The
@@ -1276,12 +1333,138 @@ export class AgentRoomService extends Service {
           `[agent-room] wake watermark refused seq=${message.seq} in ${roomId} (mark=${this.wakeWatermark.watermark(roomId)}); stats().regressed is the tripwire`,
         );
       }
+      // ---------------------------------------------------------------------
+      // 0.1.46 ACK plane — THE RECEIPT. This is the boundary the whole release is
+      // about: the message reached THIS machine, passed THIS machine's wake rule, and
+      // a resident agent was just handed it. Until this line existed, that fact was
+      // indistinguishable from "the message never got here" for everyone else: on
+      // 2026-09-15 three of four machines woke for seq 4405 and produced nothing
+      // anywhere, and one of them could only be diagnosed by reading 142,000 lines.
+      //
+      // FIRE AND FORGET, ON PURPOSE (requirement 6): the turn is already running, so a
+      // room write that fails must not — and cannot — take it back. Nothing is awaited
+      // here, no lock is held, and the sweep's `listenPending` re-arm is unaffected.
+      // ---------------------------------------------------------------------
+      void this.postAckReceipt(roomId, identity, message.seq, pick.decision.reason);
     } catch (error) {
       this.diag("listening: wake failed for " + roomId + " — " + String(error));
     } finally {
       // Re-arm after a generous window so later messages can wake again.
       const timer = setTimeout(() => this.listenPending.delete(roomId), 60_000);
       try { timer.unref(); } catch { /* ignore */ }
+    }
+  }
+
+  /**
+   * Post ONE receipt line for a dispatch this node was actually handed (0.1.46).
+   *
+   * ORDER OF OPERATIONS, and why it is this order:
+   *   1. the wake already happened (`agent.followup` accepted) — the receipt describes
+   *      something that is TRUE at this instant, not something we hope will happen;
+   *   2. `allowReceipt` decides: at most once per `(roomId, seq)` ever, and at most one
+   *      receipt per room per `ACK_RATE_LIMIT_MS`. Neither refusal is silent (both are
+   *      counted, and a refusal shows up on the sender as an unacked target);
+   *   3. the room write is attempted, and its failure is COUNTED (`receiptsFailed`) —
+   *      the handling proceeds either way, because it is already running.
+   *
+   * Deliberately NOT `await`ed by the caller: this method can only make the wake path
+   * slower, never safer, so it runs detached with its own error boundary.
+   */
+  private async postAckReceipt(
+    roomId: string,
+    identity: AgentIdentity,
+    seq: number,
+    rule: WakeReason,
+  ): Promise<void> {
+    try {
+      const verdict: AckRefusal = this.ackLedger.allowReceipt(roomId, seq);
+      if (verdict !== "ok") {
+        // One self-describing line, rate-limited by the caller's own policy: a
+        // "duplicate" here is the second half of the (room, seq) contract, and a
+        // rate-limited receipt is visible to the sender as an unacked target.
+        this.diag("ack: no receipt for seq=" + seq + " in " + roomId + " (reason=" + verdict + ")");
+        return;
+      }
+      const text = formatAckReceipt({ nickname: identity.nickname, agentId: identity.agentId, seq });
+      const result = await this.gateway.sendChat(roomId, { text, human: false });
+      // A receipt exists only if the room took it. `sendChat` answers a delivery status
+      // for a joined room and the stored message for an owned one; both are accepted
+      // here, while an explicit refusal is counted as a failure rather than assumed OK.
+      const status = result as { delivered?: boolean; acceptedByLocalHub?: boolean } | undefined;
+      if (status && status.delivered === false && status.acceptedByLocalHub === false) {
+        throw new Error("room refused the receipt frame");
+      }
+      this.ackLedger.noteReceiptPosted(roomId, seq);
+      // The receipt names its own nickname and seq, and it is NOT addressed to anyone
+      // (no `@`), so it wakes nobody: `wake.ts` refuses it as a `machine-frame`.
+      this.diag("ack: receipt posted for seq=" + seq + " in " + roomId + " (rule=" + rule + ", line=\"" + text + "\")");
+    } catch (error) {
+      // Requirement 6: the receipt failing must never affect the handling that already
+      // started, and must never be invisible either.
+      this.ackLedger.noteReceiptFailed();
+      this.warnRateLimited(
+        "ack-failed:" + roomId,
+        `[agent-room] ack receipt for seq=${seq} in ${roomId} could NOT be posted (${String(error)}) — the dispatch was still handed to the resident agent; ack.receiptsFailed counts this`,
+      );
+    }
+  }
+
+  /**
+   * Sender side of the ack plane (0.1.46): observe receipts and name the absences.
+   *
+   * Runs on the same 30 s cadence as the wake sweep but over EXPECTATION rooms, not
+   * `listeningRooms` — a sender need not be listening to deserve an answer about whether
+   * its dispatch arrived. Two steps, both bounded:
+   *   1. `observe`: match `[ack] <me> … seq=N` frames from a target against open
+   *      expectations (matching on the owner-stored `from` = the target's agentId, which
+   *      is authoritative);
+   *   2. `expire`: whatever is past `ACK_WINDOW_MS` without a receipt becomes
+   *      `unackedTargets` — and, when this node owns the room, ONE `[ack-miss]` line so
+   *      a human reading the room sees the silence too.
+   *
+   * The absence line is written only for OWNED rooms (`roomService.addChatMessage` is the
+   * authoritative write): a member cannot put words in the owner's store, and inventing a
+   * second write path for this would be a new defect. Non-owner senders still get the
+   * counters — the requirement is that the absence is OBSERVABLE, not that everyone can
+   * shout.
+   */
+  private async sweepAckPlane(now: number = Date.now()): Promise<void> {
+    const rooms = this.ackLedger.expectedRooms();
+    if (rooms.length === 0) return;
+    for (const roomId of rooms) {
+      try {
+        const recent = await this.recentMessagesFor(roomId, WAKE_WINDOW_ROWS);
+        const acked = this.ackLedger.observe(roomId, recent);
+        for (const agentId of acked) {
+          this.diag("ack: receipt OBSERVED in " + roomId + " from " + agentId);
+        }
+      } catch (error) {
+        this.diag("ack: observe failed for " + roomId + " — " + String(error));
+      }
+    }
+    const overdue = this.ackLedger.expire(now);
+    for (const miss of overdue) {
+      this.warnRateLimited(
+        "ack-miss:" + miss.roomId + ":" + miss.seq,
+        `[agent-room] ack: dispatch seq=${miss.seq} in ${miss.roomId} was NOT acked within ` +
+          `${Math.round(miss.waitedMs / 1000)}s by ${miss.nicknames.join("/")} — ` +
+          "ack.unackedTargets counts this; the dispatch may never have arrived at those machines",
+      );
+      this.diag("ack: MISS seq=" + miss.seq + " in " + miss.roomId + " (no receipt from " + miss.nicknames.join("/") + ")");
+      if (!this.ackLedger.needMissNotice(miss.roomId, miss.seq)) continue;
+      if (!this.roomService.getOwnedRoom(miss.roomId)) continue;
+      try {
+        const identity = await this.roomService.ensureIdentity();
+        const text = formatAckMiss({ seq: miss.seq, nicknames: miss.nicknames, waitedMs: miss.waitedMs });
+        await this.gateway.sendChat(miss.roomId, { text, human: false });
+        this.ackLedger.noteMissPosted(miss.roomId, miss.seq);
+        this.diag("ack: miss notice posted for seq=" + miss.seq + " in " + miss.roomId + " (line=\"" + text + "\")");
+      } catch (error) {
+        this.warnRateLimited(
+          "ack-miss-post:" + miss.roomId,
+          `[agent-room] ack: could not post the absence notice for seq=${miss.seq} in ${miss.roomId} (${String(error)}) — the counters still expose it`,
+        );
+      }
     }
   }
 
@@ -1381,7 +1564,15 @@ export class AgentRoomService extends Service {
     await this.restoreListening();
     // Listening sweep: rule-layer scan of listening rooms, wake the agent only
     // when a message needs it (0-token unless something actually needs a reply).
-    this.listenTimer = setInterval(() => void this.sweepListening(), 30_000);
+    // 0.1.46: the SAME 30 s cadence drives the ack plane's sender side (observe the
+    // receipts for dispatches this node posted, and expire the ones that never came).
+    // Deliberately ONE interval, not two: a second timer would double the room reads for
+    // no new information, and the window that decides "missing" is 120 s — four ticks.
+    // The ack sweep is fire-and-forget so a slow room read can never delay the wake plane.
+    this.listenTimer = setInterval(() => {
+      void this.sweepListening();
+      void this.sweepAckPlane();
+    }, 30_000);
     // Restore membership of rooms we joined before: recreate the client so
     // inbound sync/exec/task frames flow again without a manual re-join.
     void this.autoRejoinJoinedRooms();
@@ -2006,7 +2197,11 @@ export class AgentRoomService extends Service {
       const owned = this.roomService.getOwnedRoom(roomId);
       if (owned) {
         const identity = await this.roomService.ensureIdentity();
-        return this.roomService.addChatMessage(roomId, identity, input);
+        const message = await this.roomService.addChatMessage(roomId, identity, input);
+        // 0.1.46: every send path funnels through HERE, so this is where the receipt
+        // expectation is opened — no caller can forget it (see registerAckExpectation).
+        this.registerAckExpectation(roomId, input, message?.seq);
+        return message;
       }
       const client = this.clients.get(roomId);
       if (!client) throw new Error(`房间不存在: ${roomId}`);
@@ -2038,7 +2233,13 @@ export class AgentRoomService extends Service {
           );
         }
       }
-      if (outcome.delivered) return status;
+      if (outcome.delivered) {
+        // 0.1.46: a joined-room send is tracked too, but ONLY once the owner confirmed a
+        // real seq — the receipt a target writes names that seq, so an expectation
+        // opened on a guess could never be matched (it would report a phantom absence).
+        this.registerAckExpectation(roomId, input, status.confirmedSeq);
+        return status;
+      }
       if (outcome.queued) {
         this.warnRateLimited(
           "queued:" + roomId,
@@ -2439,6 +2640,12 @@ export class AgentRoomService extends Service {
       // (a climbing value means the watermark was bypassed); `roomResets` says the
       // 128-room cap was reached, which costs at most one extra wake per room.
       wake: this.wakeWatermark.stats(),
+      // ACK plane (0.1.46) — the receipt that 0.1.45's `wake` block could not give.
+      // READ IT AS: `receiptsPosted` = "machines that took MY dispatch"; sender role
+      // `ackedTargets` / `unackedTargets` / `maxAckedObservedSeq` = "did the machines I
+      // addressed actually take it". `wake.wokenByMention` counts dispatches; this block
+      // counts deliveries. Flat numbers only, same shape as `wake`.
+      ack: this.ackLedger.stats(),
       // Bridge-truth diagnostics (0.1.42, card ⑤ / D-19). `connDrops` counts
       // status reports REFUSED because the reporting client had already been
       // replaced — a non-zero value is the fix working, not a fault; it used to
