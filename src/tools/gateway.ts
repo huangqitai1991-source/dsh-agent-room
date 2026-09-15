@@ -17,9 +17,11 @@ import type {
 } from "../types.js";
 import type { CreateRoomInput } from "../host/room-service.js";
 import type { ChatDeliveryStatus } from "../host/outbound.js";
+import type { WakePreview } from "../host/wake.js";
 
 /** Delivery status of a message sent to a JOINED room (see host/outbound.ts). */
 export type { ChatDeliveryStatus };
+export type { WakePreview };
 
 export interface TaskInput {
   title: string;
@@ -105,6 +107,18 @@ export interface RoomGateway {
     roomId: string,
     input: { text: string; replyTo?: number; mentions?: string[]; human?: boolean },
   ): Promise<ChatMessage | ChatDeliveryStatus>;
+  /**
+   * How many room members the wake rule would be woken by this message (0.1.45).
+   *
+   * `woken: 0` means "handed to the room, but this post addresses nobody" — the
+   * distinction that did not exist when seq 3267 reported `confirmedByOwner: true`
+   * while waking no one. It is a rule PREDICTION over this node's room view (see
+   * `WakePreview.note`), not a receipt from the targets.
+   */
+  wakePreview(
+    roomId: string,
+    input: { text: string; mentions?: string[]; human?: boolean },
+  ): WakePreview;
   updateSettings(roomId: string, patch: Partial<RoomSettings> & { password?: string }): Promise<Room>;
   transferController(roomId: string, toAgentId: string): Promise<Room>;
 

@@ -21,7 +21,8 @@ import { LanDiscovery } from "./discovery.js";
 import { RoomClient } from "./room-client.js";
 import { OutboundHub, OWNER_CONFIRM_WAIT_MS, toDeliveryStatus } from "./outbound.js";
 import { DeliveryDedupe, MAX_DEDUPE_ROOMS, MAX_DEDUPE_SEQS_PER_ROOM } from "./dedupe.js";
-import { listenAuthorKind, MAX_WAKE_ROOMS, WakeWatermark, wakeKindLabel } from "./wake.js";
+import { decideListenWake, listenAuthorKind, MAX_NAMED_DENIALS_PER_SWEEP, MAX_WAKE_ROOMS, WAKE_WINDOW_ROWS, WakeWatermark, wakeKindLabel } from "./wake.js";
+import type { WakeDecision, WakePreview, WakeReason, WakeRuleSelf } from "./wake.js";
 import { DEFAULT_PORT } from "./protocol.js";
 import type { RoomBeacon } from "./protocol.js";
 import { nowIso } from "./util.js";
@@ -983,32 +984,65 @@ export class AgentRoomService extends Service {
     const identity = this.roomService.getIdentity();
     if (!identity) return;
     for (const roomId of [...this.listeningRooms]) {
-      if (this.listenPending.has(roomId)) continue;
+      if (this.listenPending.has(roomId)) {
+        // 0.1.45 (小捷's review, seq 3728 §4): this skip used to be invisible. A
+        // message that arrives inside this window is not refused by the RULE — it is
+        // never seen by the sweep — so it left no `denied` line and no counter.
+        // Counting it (and saying so once per skip) is what makes "nothing woke me"
+        // provable rather than inferred.
+        this.wakeWatermark.notePendingSkip();
+        this.diag("listening: sweep skipped in " + roomId + " (rule=pending, a wake from the previous sweep is still in flight)");
+        continue;
+      }
       try {
-        const recent = await this.recentMessagesFor(roomId, 20);
+        const recent = await this.recentMessagesFor(roomId, WAKE_WINDOW_ROWS);
         if (recent.length === 0) continue;
         const lastSeq = recent[recent.length - 1]!.seq;
         const seen = this.listenSeen.get(roomId);
         if (seen === undefined) {
           // First sweep for this room: start from the current tail and process
-          // nothing — history must never re-trigger a wake.
+          // nothing — history must never re-trigger a wake. 0.1.45: said out loud
+          // once per room (design, not a defect) instead of silently skipped.
           this.listenSeen.set(roomId, lastSeq);
+          this.wakeWatermark.noteSeedSkip();
+          this.diag("listening: seeded cursor at seq=" + lastSeq + " in " + roomId + " (rule=seed, history is not an instruction; a message posted during this instant is not a candidate)");
           continue;
         }
         const fresh = recent.filter((m) => m.seq > seen);
+        // 0.1.45 (小黄's review, seq 3729): the read window is FINITE, so messages
+        // that fall outside it are never candidates at all — neither woken nor
+        // denied. Measured on this fleet: 152 control frames arrived in ~3 minutes
+        // while an exec storm was running, i.e. the old 20-row window covered < 30 s,
+        // less than one sweep period. The window is therefore widened to
+        // WAKE_WINDOW_ROWS, and any residue is COUNTED and NAMED here rather than
+        // left to be discovered by a transcript expedition.
+        const missed = lastSeq - seen - fresh.length;
+        if (missed > 0) {
+          this.wakeWatermark.noteWindowGap(missed);
+          this.diag(
+            "listening: window gap in " + roomId + ": " + missed + " message(s) between seq=" + (seen + 1) +
+              " and seq=" + lastSeq + " were never candidates (read window=" + WAKE_WINDOW_ROWS + " rows)",
+          );
+        }
         // 0.1.41: the cursor only ever ADVANCES. `lastSeq` is the tail of THIS
-        // node's 20-message window, so it regresses whenever the local mirror
+        // node's window, so it regresses whenever the local mirror
         // falls behind the owner — the old unconditional write lowered the cursor
         // and made already-woken seqs "fresh" again (the root cause of card 04).
         if (lastSeq > seen) this.listenSeen.set(roomId, lastSeq);
         if (fresh.length === 0) continue;
-        const target = this.pickListenTarget(fresh, identity.agentId, (skipped, reason) => {
-          this.wakeWatermark.noteSelfAuthored();
-          // Never a silent drop: the boss can see that his own browser instruction
-          // was seen and deliberately not treated as a wake.
-          this.diag("listening: skipped seq=" + skipped.seq + " (" + reason + ") in " + roomId);
+        // 0.1.45: the rule needs this node's OWN identity. There is deliberately NO
+        // "author is the controller" input: the shipped rule has no author-based
+        // admission at all (see the header of src/host/wake.ts — 小捷's room seq 3728
+        // measured 24 wasted wakes/day for that clause, and "is this a dispatch"
+        // cannot be inferred from who wrote it).
+        const self: WakeRuleSelf = { agentId: identity.agentId, nickname: identity.nickname };
+        const denials: Array<{ message: ChatMessage; reason: WakeReason }> = [];
+        const pick = this.pickListenTarget(fresh, self, (denied, decision) => {
+          this.wakeWatermark.noteDenied(decision.reason); // exact, per message, per rule
+          denials.push({ message: denied, reason: decision.reason });
         });
-        if (!target) continue;
+        this.logDenials(roomId, denials);
+        if (!pick) continue;
         // 0.1.41: measure the channel that CANNOT be verified at this layer. Every
         // admitted wake is a remote author CLAIMING `human: true` (the wire carries
         // no provenance), so the claim count is what says how much of the remote-
@@ -1017,44 +1051,172 @@ export class AgentRoomService extends Service {
           if (listenAuthorKind(m, identity.agentId) === "human") this.wakeWatermark.noteHumanClaim();
         }
         this.listenPending.add(roomId);
-        void this.runListenWake(roomId, identity, target);
+        void this.runListenWake(roomId, identity, pick);
       } catch (error) {
         this.diag("listening: sweep error for " + roomId + " — " + String(error));
       }
     }
   }
 
+  /**
+   * Report one sweep's denials. NOTHING is silent — but not everything is a line.
+   *
+   * POLICY, and why it is not "one line per message":
+   *   - `not-addressed` and `self-authored` are the reasons a REAL chat message gets
+   *     refused, i.e. exactly the traceability this version exists for. They get one
+   *     line per message, capped at MAX_NAMED_DENIALS_PER_SWEEP per sweep (the rest
+   *     are named by their count, and every one of them is still counted per rule in
+   *     /state — the count is exact, only the naming is capped).
+   *   - `control-frame` and `machine-frame` are bus traffic that is not a dispatch by
+   *     construction, and their volume is NOT under any chat's control: measured 152
+   *     `[org:*]` frames in ~3 minutes during one exec storm (and 2172-3400 per member
+   *     over the room's whole history). Naming each of them individually is the
+   *     411 MB incident in a new hat, so they are reported as ONE aggregate line per
+   *     rule per sweep, carrying the count and either the exact seqs (≤5) or the range.
+   *   Every rule therefore leaves a trace each sweep, and `/state.wake` counts exactly
+   *   how many messages each rule refused.
+   */
+  private logDenials(roomId: string, denials: Array<{ message: ChatMessage; reason: WakeReason }>): void {
+    let named = 0;
+    let suppressed = 0;
+    const aggregate = new Map<WakeReason, number[]>();
+    for (const { message, reason } of denials) {
+      if (reason === "control-frame" || reason === "machine-frame") {
+        const list = aggregate.get(reason) ?? [];
+        list.push(message.seq);
+        aggregate.set(reason, list);
+        continue;
+      }
+      if (named < MAX_NAMED_DENIALS_PER_SWEEP) {
+        named += 1;
+        this.diag(
+          "listening: denied seq=" + message.seq + " (rule=" + reason + ", from=" +
+            message.fromNickname + "/" + message.from + ") in " + roomId,
+        );
+      } else {
+        suppressed += 1;
+      }
+    }
+    for (const [reason, seqs] of aggregate) {
+      const shown = seqs.length <= 5 ? "seq=" + seqs.join(",") : "seq=" + seqs[0] + ".." + seqs[seqs.length - 1];
+      this.diag("listening: denied " + seqs.length + " message(s) (rule=" + reason + ", " + shown + ") in " + roomId);
+    }
+    if (suppressed > 0) {
+      this.diag(
+        "listening: denied " + suppressed + " more message(s) (rules=not-addressed/self-authored, newest " +
+          MAX_NAMED_DENIALS_PER_SWEEP + " already named above) in " + roomId,
+      );
+    }
+  }
+
   /** Rule layer: which of the fresh messages deserves a wake-up. */
   /**
-   * Rule layer: only HUMAN speech wakes the agent — the remote-command channel.
+   * Rule layer: who deserves a wake-up (0.1.45).
    *
-   * 0.1.41 adds the authorship rule. Before it, `human` alone was the whole test,
-   * and `human` is set by the browser (`client/index.tsx` "Web chat always speaks
-   * as the human at the browser"), so a message THIS node authored — its own bot
-   * or its own browser — was accepted as "人类发言（远程指挥，最高优先级）" and
-   * woke the node that wrote it. `listenAuthorKind` (src/host/wake.ts) decides:
-   * self → refused (reported via `onSkip`, not silently dropped), agent → refused,
-   * remote human → woken.
+   * HISTORY, because this function is where the defect lived:
+   *
+   *   ≤0.1.40 — `if (fresh[i].human) return fresh[i];` — `human` was the whole rule.
+   *   0.1.41  — the authorship check was added on top (card ④: a node must not wake
+   *             for its own message), but `human` remained the ONLY admission, and
+   *             only the `self` branch reported anything:
+   *
+   *               if (kind === "human") return message;
+   *               if (kind === "self") onSkip?.(message, "self-authored");
+   *               // kind === "agent" → falls out of the loop, silently
+   *
+   *             That last line is the ~2-hour incident of 2026-09-15: our own
+   *             dispatch path (`human = $false`, `sendFallbackLine`) classified as
+   *             `agent`, woke nobody, and logged nothing. The target could not even
+   *             prove it had not been woken.
+   *
+   *   0.1.45  — the decision moves to `decideListenWake` (src/host/wake.ts), which
+   *             admits a message that NAMES this node (or comes from the room's
+   *             controller), keeps `human` as a fallback, refuses control frames and
+   *             machine self-test stamps, and RETURNS A REASON FOR EVERY OUTCOME.
+   *             The caller cannot drop a message without naming the rule: `onSkip`
+   *             fires for every denied candidate.
    */
   private pickListenTarget(
     fresh: ChatMessage[],
-    selfAgentId: string,
-    onSkip?: (message: ChatMessage, reason: string) => void,
-  ): ChatMessage | undefined {
+    self: WakeRuleSelf,
+    onSkip?: (message: ChatMessage, decision: WakeDecision) => void,
+  ): { message: ChatMessage; decision: WakeDecision } | undefined {
     for (let i = fresh.length - 1; i >= 0; i--) {
       const message = fresh[i]!;
-      const kind = listenAuthorKind(message, selfAgentId);
-      if (kind === "human") return message;
-      if (kind === "self") onSkip?.(message, "self-authored");
+      const decision = decideListenWake({ message, self });
+      if (decision.wake) return { message, decision };
+      onSkip?.(message, decision);
     }
     return undefined;
+  }
+
+  /**
+   * SENDER-SIDE wake preview (0.1.45, requirement 4): "delivered" must never again
+   * be readable as "acted on".
+   *
+   * Until this existed, a poster's only receipt was `acceptedByLocalHub` /
+   * `confirmedByOwner` — both of which were TRUE for the questionnaire (seq 3267)
+   * and the reminder (seq 3606) that woke nobody on three of four machines. The
+   * sender's own store even confirmed them; the target's wake plane never saw them.
+   *
+   * The computation is the SAME rule the receivers run (`decideListenWake`), applied
+   * per room member with that member as the decision's `self`. One rule, two callers
+   * — they cannot drift, which is the only reason a prediction is worth reporting.
+   *
+   * HONEST BOUND (repeated in the returned `note`): this node has no channel that
+   * observes a remote node's wake plane, so this is a prediction over THIS node's
+   * room view (roster + `controllerAgentId` + each member's nickname). It is wrong
+   * only for targets that are offline or have listening OFF. A delivered RECEIPT
+   * needs the ack plane, which 0.1.45 does not ship (小捷's option C, seq 3704 §Q6).
+   */
+  private wakePreviewFor(
+    roomId: string,
+    input: { text: string; mentions?: string[]; human?: boolean },
+  ): WakePreview {
+    const note =
+      "0.1.45 rule-predicted from THIS node's room view: a target that is offline, or that has " +
+      "listening OFF, will not actually wake — read woken:0 as 'this post addresses nobody'";
+    const identity = this.roomService.getIdentity();
+    const room = this.roomService.getOwnedRoom(roomId) ?? this.clients.get(roomId)?.snapshot?.room;
+    if (!identity || !room) return { woken: 0, targets: [], reasons: [], note };
+    // The message as the rule would see it once the owner stores it: the author is
+    // THIS node, and `mentions` may still be nicknames (the owner resolves them).
+    const message = {
+      text: input.text,
+      mentions: input.mentions,
+      human: input.human,
+      from: identity.agentId,
+      fromNickname: identity.nickname,
+    };
+    const targets: string[] = [];
+    const reasons: WakeReason[] = [];
+    for (const member of room.members ?? []) {
+      // Card ④ by construction: the author is never one of its own targets. The
+      // rule would deny it anyway (`self-authored`); skipping here keeps the
+      // reported count about OTHER nodes only.
+      if (member.agentId === identity.agentId) continue;
+      const decision = decideListenWake({
+        message,
+        self: { agentId: member.agentId, nickname: member.nickname },
+      });
+      if (decision.wake) {
+        targets.push(member.agentId);
+        reasons.push(decision.reason);
+      }
+    }
+    return { woken: targets.length, targets, reasons, note };
   }
 
   /** Wake the resident agent for a message that passed the rule layer. The
    *  prompt tells it to act ONLY when needed — otherwise stay silent (this is
    *  the cheap judge + executor in one call; a separate small-model judge is a
    *  v2 optimization). */
-  private async runListenWake(roomId: string, identity: AgentIdentity, message: ChatMessage): Promise<void> {
+  private async runListenWake(
+    roomId: string,
+    identity: AgentIdentity,
+    pick: { message: ChatMessage; decision: WakeDecision },
+  ): Promise<void> {
+    const message = pick.message;
     const agent = await this.resolveResidentAgent(identity);
     if (!agent) {
       this.diag("listening: no resident agent for " + roomId);
@@ -1099,12 +1261,15 @@ export class AgentRoomService extends Service {
         this.diag("listening: resident agent has no followup — not waking seq=" + message.seq + " in " + roomId);
         return;
       }
-      this.diag("listening: woken seq=" + message.seq + " in " + roomId + " (from=" + message.fromNickname + (message.human ? ", human" : "") + ")");
+      this.diag("listening: woken seq=" + message.seq + " in " + roomId + " (from=" + message.fromNickname + (message.human ? ", human" : "") + ", rule=" + pick.decision.reason + (pick.decision.detail ? ", " + pick.decision.detail : "") + ")");
       agent.followup(createUserMessage({ content: [{ type: "text", text: prompt }], source: { kind: "plugin", plugin: "dsh-agent-room" } }));
       // Marked only AFTER the dispatch actually happened. A seq at or below the
       // mark is refused (`regressed`) instead of lowering it — that counter must
       // stay 0, and a climbing value means some caller bypassed `seen()`.
       const advanced = this.wakeWatermark.mark(roomId, message.seq);
+      // 0.1.45: the admission is counted by the rule that admitted it, next to the
+      // mark — i.e. only for a wake that really reached `agent.followup`.
+      this.wakeWatermark.noteWokenBy(pick.decision.reason);
       if (!advanced && Number.isSafeInteger(message.seq) && message.seq > 0) {
         this.warnRateLimited(
           "wake-regressed:" + roomId,
@@ -1895,6 +2060,7 @@ export class AgentRoomService extends Service {
       }
       return status;
     },
+    wakePreview: (roomId, input) => this.wakePreviewFor(roomId, input),
     updateSettings: (roomId, patch) => this.roomService.updateSettings(roomId, patch),
     transferController: (roomId, toAgentId) => this.roomService.transferController(roomId, toAgentId),
 

@@ -188,9 +188,10 @@ export function createRouter(service: AgentRoomService): Handler {
 
       const chatMatch = /^\/agent-room-api\/rooms\/([^/]+)\/chat$/.exec(path);
       if (method === "POST" && chatMatch) {
+        const roomId = decodeURIComponent(chatMatch[1]!);
         const body = (await readJson(request)) as { text?: string; mentions?: string[]; human?: boolean };
         if (!body.text) return sendJson(response, 400, { ok: false, error: "text is required" });
-        const result = await service.gateway.sendChat(decodeURIComponent(chatMatch[1]!), {
+        const result = await service.gateway.sendChat(roomId, {
           text: body.text,
           mentions: body.mentions,
           human: body.human,
@@ -202,6 +203,20 @@ export function createRouter(service: AgentRoomService): Handler {
         // `acceptedByLocalHub` because dsh-agent-org 0.2.10 reads it; the honest
         // fields are the two new ones. `confirmedByOwner` is only true when the
         // owner echoed the message back with its own seq.
+        //
+        // 0.1.45: `woken` is the answer to the question those two fields could not
+        // answer. On 2026-09-15 seq 3267 (the questionnaire) came back
+        // `confirmedByOwner: true` and woke NOBODY on three of four machines, so
+        // "delivered" was read as "acted on". `woken` is the rule's own count of room
+        // members this post addresses (mention / controller / human fallback), and
+        // `wake.note` says in one line that it is a prediction over this node's room
+        // view, not a receipt. Backward compatible: nothing existing changed.
+        const wake = service.gateway.wakePreview(roomId, {
+          text: body.text,
+          mentions: body.mentions,
+          human: body.human,
+        });
+        const wakeFields = { woken: wake.woken, wake };
         if (result && "delivered" in result) {
           return sendJson(response, 200, {
             ok: true,
@@ -214,10 +229,11 @@ export function createRouter(service: AgentRoomService): Handler {
               delivered: result.delivered,
               queued: result.queued,
               reason: result.reason,
+              ...wakeFields,
             },
           });
         }
-        return sendJson(response, 200, { ok: true, data: { seq: result?.seq ?? null, acceptedByLocalHub: true, delivered: true, confirmedByOwner: true, confirmNote: "owner-confirmed" } });
+        return sendJson(response, 200, { ok: true, data: { seq: result?.seq ?? null, acceptedByLocalHub: true, delivered: true, confirmedByOwner: true, confirmNote: "owner-confirmed", ...wakeFields } });
       }
 
       const settingsMatch = /^\/agent-room-api\/rooms\/([^/]+)\/settings$/.exec(path);
