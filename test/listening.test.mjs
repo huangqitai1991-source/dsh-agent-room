@@ -23,8 +23,13 @@
  *   3. explicit OFF + restart stays OFF (the reverse assertion);
  *   4. an existing file that lacks the field, or is unreadable, reads as "not
  *      listening" and never errors (backward compatibility);
- *   5. an owned room is never restored (the flag has no meaning there);
- *   6. static guard: the toggle persists, the boot restores, nothing else writes.
+ *   5. an OWNED room that was listening IS restored (0.1.44 / D-28: the owner of a
+ *      room may listen to its own room — 0.1.43 skipped exactly those, so the room
+ *      owner came back muted after every restart);
+ *   6. an owned room with NO recorded intent is still not listening (nothing is
+ *      auto-enabled just because a node owns a room);
+ *   7. static guard: the toggle persists, the boot restores, nothing else writes,
+ *      and the restore no longer skips owned rooms.
  *
  * Every port is an ephemeral-or-test loopback port inside this process; every
  * dataDir is a temp dir; no service outside this process is touched.
@@ -393,32 +398,69 @@ guarded("backward compatibility: a file without the field, or unreadable, reads 
   }
 });
 
-guarded("an OWNED room is never restored from the intent file (0.1.42)", async () => {
-  const { owner, rooms } = await startOwner(19652);
+guarded("an OWNED room that was listening comes back listening with NO script (0.1.44 / D-28)", async () => {
+  const { owner, rooms } = await startOwner(19670);
   const room = rooms[0];
   try {
-    // A stale intent that names a room THIS node serves: the flag has no meaning
-    // there (the browser offers no toggle for an owned room), so it must be skipped.
-    await writeFile(join(owner.dir, "listening.json"), JSON.stringify({ rooms: [room.roomId] }), "utf8");
+    // The REAL route, driven on the OWNER's own room: nothing in the route or in the
+    // browser refuses an owned room (measured: client.js renders the 监听 toggle for
+    // every room), so this is the state 小婷 was in when she came back muted.
+    await withApi(owner.svc, async (api) => {
+      const res = await api.post(room.roomId, true);
+      assert.strictEqual(res.status, 200, `POST /listening on an OWNED room must answer 200, got ${res.status}`);
+      assert.strictEqual(owner.svc.isListening(room.roomId), true, "the owner must be able to listen to its own room");
+      await settle();
+      const intent = await readIntent(owner.dir);
+      console.log(`  owner listening.json after POST {on:true}: ${JSON.stringify(intent)}`);
+      assert.deepStrictEqual(intent, { rooms: [room.roomId] }, "the OWNER's toggle must persist too");
+    });
+  } finally {
+    await stopNode(owner); // the restart: same dataDir, new process, no upgrade script
+  }
+
+  const restarted = await startNode(19671, owner.dir);
+  try {
+    const restored = restarted.svc.isListening(room.roomId);
+    await withApi(restarted.svc, async (api) => {
+      const seen = await waitForListening(api, room.roomId, true);
+      console.log(`  owned room ${room.roomId.slice(0, 8)} after restart: svc.isListening=${restored} state.listening=${seen.value} (0.1.43: false)`);
+      assert.strictEqual(restored, true, "an OWNED room must be restored from the intent (0.1.43 skipped it: D-28)");
+      assert.ok(seen.ok, `/state must report the restored flag on an owned room, got ${seen.value}`);
+    });
+  } finally {
+    await stopNode(restarted);
+    await dropDir(restarted.dir);
+    await dropDir(owner.dir);
+  }
+});
+
+guarded("an owned room with NO recorded intent is NOT auto-enabled (0.1.44: restore never force-enables)", async () => {
+  const { owner, rooms } = await startOwner(19672);
+  const room = rooms[0];
+  try {
+    // No toggle was ever posted for this room, so there is nothing to restore —
+    // "the owner may listen" must not become "the owner always listens".
+    assert.strictEqual(
+      await readIntent(owner.dir).then((intent) => intent.missing !== undefined),
+      true,
+      "a node that was never toggled must have no intent file at all",
+    );
     await stopNode(owner);
-    const restarted = await startNode(19653, owner.dir);
+    const restarted = await startNode(19673, owner.dir);
     try {
-      console.log(`  owned room ${room.roomId.slice(0, 8)}: restored=${restarted.svc.isListening(room.roomId)}`);
-      assert.strictEqual(
-        restarted.svc.isListening(room.roomId),
-        false,
-        "an owned room is served here: its listening flag must not be restored from a stale file",
-      );
+      console.log(`  owned room ${room.roomId.slice(0, 8)} with no intent file: restored=${restarted.svc.isListening(room.roomId)}`);
+      assert.strictEqual(restarted.svc.isListening(room.roomId), false, "owning a room must not imply listening to it");
     } finally {
       await stopNode(restarted);
       await dropDir(restarted.dir);
+      await dropDir(owner.dir);
     }
   } finally {
     await dropDir(owner.dir);
   }
 });
 
-guarded("static guard: the toggle persists, the boot restores, and nothing else writes the intent (0.1.42)", () => {
+guarded("static guard: the toggle persists, the boot restores, and nothing else writes the intent (0.1.42/0.1.44)", () => {
   const src = readFileSync(join(ROOT, "src", "host", "service.ts"), "utf8");
   const toggle = src.slice(src.indexOf("setListening(roomId: string, on: boolean): void {"), src.indexOf("private persistListening()"));
   assert.match(toggle, /this\.persistListening\(\);/, "setListening must persist the intent");
@@ -437,10 +479,30 @@ guarded("static guard: the toggle persists, the boot restores, and nothing else 
   assert.match(src, /this\.persistListening\(\);\s*\n\s*this\.emitBrowser\(\{ kind: "state" \}\);/);
 
   const restore = src.slice(src.indexOf("private async restoreListening()"), src.indexOf("private async sweepListening()"));
+  // 0.1.44 / D-28: every recorded room is restored, INCLUDING a room this node owns.
+  // `loadListeningIntent()` is what follows the membership (joined records + owned
+  // rooms) and it never returns ids this node does not know, so the restore loop has
+  // no business filtering again — the old `continue` on an owned room is exactly the
+  // defect that muted the room owner on every restart.
   assert.match(
     restore,
-    /if \(this\.roomService\.getOwnedRoom\(roomId\)\) \{ skipped \+= 1; continue; \}/,
-    "the restore must skip owned rooms",
+    /this\.listeningRooms\.add\(roomId\);\s*\n\s*restored \+= 1;/,
+    "the restore must add every recorded room to the listening set",
+  );
+  assert.strictEqual(
+    (restore.match(/\bcontinue;/g) || []).length,
+    0,
+    "the restore must not skip rooms with `continue` (0.1.43 skipped owned rooms: D-28)",
+  );
+  assert.doesNotMatch(
+    restore,
+    /getOwnedRoom\(roomId\)\)\s*\{\s*skipped/,
+    "the restore must not special-case owned rooms",
+  );
+  assert.match(
+    restore,
+    /if \(this\.roomService\.getOwnedRoom\(roomId\)\) owned \+= 1;/,
+    "owned rooms must be counted in the restore log, not skipped",
   );
 
   const persistence = readFileSync(join(ROOT, "src", "host", "persistence.ts"), "utf8");
