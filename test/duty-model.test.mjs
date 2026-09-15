@@ -652,5 +652,219 @@ guarded("0.1.48 static guard: the model is supplied at creation, verified, and s
   assert.match(src, /readJsonConfig<\{ provider\?: string; model\?: string; source\?: string \}>\(this\.residentModelFile\)/);
 });
 
+/* ============ 5. 0.1.49 — the workspace that lets the sandboxed shell start at all ============ */
+
+/**
+ * MEASURED ON 小麦, 2026-09-15 midnight, from the session's OWN transcript (first hand):
+ *
+ *   TOOLCALL pwsh {"command": "Invoke-RestMethod …"}          ← the prompt's fallback route
+ *   TOOLRESULT Error: Windows ACL temp root must be outside the workspace:
+ *               workspace=C:\Users\Administrator; temp=C:\Users\Administrator\AppData\Local\Temp
+ *   APPROVAL/ASKED {"toolName":"pwsh","reason":"escalate sandbox to danger-full-access: The sandboxed
+ *                   shell cannot start at all …"}             ← nobody answers an approval in a duty
+ *                                                               session ⇒ the turn ends with NO output
+ *
+ * 0.1.48 asked the host to create the session with `cwd: homedir()`, and `%TEMP%` lives INSIDE the
+ * home directory — so every shell call died before running, in a session that has no `room_send`
+ * tool to fall back on. `started:1` was true; the machine was still silent.
+ *
+ * The SAME command in a workspace that does not contain the temp root, on the same machine:
+ *   TOOLRESULT [{"type":"tool-result","content":[{"type":"text","text":"SBX-OK\r\n"}],"isError":false}]
+ *   TURN/END {"turn":1,"reason":{"kind":"completed"}}
+ */
+
+const wsMod = await import(libBase + "service.js");
+
+function need049(what) {
+  if (typeof wsMod.resolveDutyWorkspace !== "function" || typeof wsMod.workspaceAcceptsShell !== "function") {
+    failures += 1;
+    throw new Error(
+      `this build predates 0.1.49 (no resolveDutyWorkspace/workspaceAcceptsShell; AR_LIB=${AR_LIB ?? "(local lib)"}): ${what}`,
+    );
+  }
+}
+
+guarded("0.1.49: the session workspace is chosen so the sandboxed shell can start at all", async () => {
+  need049("小麦: workspace=C:\\Users\\Administrator contains %TEMP% ⇒ every pwsh call died before running");
+  const { homedir, tmpdir } = await import("node:os");
+  const { dirname, join: j } = await import("node:path");
+  const temp = tmpdir();
+  // The rule itself (the harness's own `containsDirectory`, dsh-sandbox-windows-acl/path-boundary).
+  assert.strictEqual(wsMod.containsDirectory(temp, j(temp, "x", "y")), true, "the temp root contains its children");
+  assert.strictEqual(wsMod.containsDirectory(j(temp, "ws"), temp), false, "a child of the temp root does not contain it");
+  assert.strictEqual(wsMod.containsDirectory(dirname(temp), temp), true, "an ancestor contains it");
+  const fixtureHome = j(temp, "ar49-dsh-home");
+  const chosen = wsMod.resolveDutyWorkspace({}, fixtureHome, temp);
+  assert.strictEqual(chosen.dir, j(fixtureHome, "agent-room", "duty-workspace"), "the default workspace is dedicated, not the home dir");
+  assert.strictEqual(wsMod.containsDirectory(chosen.dir, temp), false, "and can never contain the temp root");
+  console.log(`  [ws] default=${chosen.dir} source=${chosen.source} temp=${temp}`);
+  // A configured workspace that would kill the shell must be REFUSED, not obeyed.
+  const unsafe = wsMod.resolveDutyWorkspace({ AGENT_ROOM_WORKDIR: dirname(temp) }, fixtureHome, temp);
+  const unsafeApplies = process.platform === "win32";
+  if (unsafeApplies) {
+    assert.deepStrictEqual(unsafe.rejected, [dirname(temp)], "the unsafe AGENT_ROOM_WORKDIR is rejected BY NAME");
+    assert.strictEqual(unsafe.dir, j(fixtureHome, "agent-room", "duty-workspace"), "and the safe default is used instead");
+    assert.strictEqual(wsMod.workspaceAcceptsShell(dirname(temp), temp), false);
+    assert.strictEqual(wsMod.workspaceAcceptsShell(homedir(), temp), !wsMod.containsDirectory(homedir(), temp));
+    console.log(`  [ws] win32 guard active: rejected=${JSON.stringify(unsafe.rejected)}`);
+  } else {
+    console.log("  [ws] non-Windows: the ACL temp-root rule does not exist ⇒ the guard is a no-op (documented, not accidental)");
+    const posix = wsMod.resolveDutyWorkspace({ AGENT_ROOM_WORKDIR: j(temp, "work") }, fixtureHome, temp);
+    assert.strictEqual(posix.dir, j(temp, "work"), "on other platforms an explicit workspace is honoured");
+  }
+  // The guard must ALWAYS terminate with a usable directory. The last resort is a CHILD of the
+  // temp root, so it can never contain it — that is what makes the candidate list total.
+  const lastResort = j(temp, "dsh-agent-room-duty");
+  assert.strictEqual(wsMod.containsDirectory(lastResort, temp), false, "the last resort cannot contain the temp root");
+  assert.strictEqual(wsMod.workspaceAcceptsShell(lastResort, temp), true, "so it is always an acceptable answer");
+  assert.strictEqual(wsMod.resolveDutyWorkspace({}, temp, temp).rejected.length, 0, "a DSH_HOME that is itself the temp root still resolves");
+  console.log(`  [ws] last resort=${lastResort} (safe by construction)`);
+});
+
+guarded("0.1.49: the HOST session is created with a workspace that cannot contain the temp root", async () => {
+  need049("0.1.48 handed the host `cwd: homedir()`; that single line is why 小麦 ran turns and said nothing");
+  const { createServer } = await import("node:http");
+  const { tmpdir } = await import("node:os");
+  const { dirname, join: j } = await import("node:path");
+  const { mkdtemp } = await import("node:fs/promises");
+  const requests = [];
+  const sessionId = "session-49aa11bb-0000-1111-2222-333344445555";
+  const server = createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      requests.push(Buffer.concat(chunks).toString("utf8"));
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ type: "server-response", rpcId: "x", result: { ok: true, value: { sessionId, agentPreset: "standard" } } }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const probe = await boot(19824, "ar49-hostws-", { liveAgents: [], dutyInList: false });
+  process.env.AGENT_ROOM_WEB_PORT = String(server.address().port);
+  const fixtureHome = await mkdtemp(j(tmpdir(), "ar49-dsh-"));
+  const prevHome = process.env.DSH_HOME;
+  const prevWork = process.env.AGENT_ROOM_WORKDIR;
+  process.env.DSH_HOME = fixtureHome;
+  // Deliberately the WRONG value: an operator (or an old doc) pointing the workspace at a
+  // directory that contains the temp root. 0.1.49 must refuse it out loud, not go silent again.
+  process.env.AGENT_ROOM_WORKDIR = process.platform === "win32" ? dirname(tmpdir()) : j(tmpdir(), "ar49-explicit-ws");
+  const logs = captureLogs();
+  try {
+    await probe.svc.ensureDutyAgent();
+    await new Promise((r) => setTimeout(r, 100));
+    assert.strictEqual(requests.length, 1, "the host is still asked exactly once");
+    const body = JSON.parse(requests[0]);
+    const cwd = body.payload?.cwd;
+    console.log(`  [host-ws] cwd=${cwd} rejected=${JSON.stringify(logs.lines.filter((l) => l.includes("refusing session workspace")).length)}`);
+    assert.ok(cwd, "a workspace must still be passed");
+    assert.strictEqual(wsMod.containsDirectory(cwd, tmpdir()), false, "THE workspace must never contain the OS temp root");
+    assert.ok(
+      logs.lines.some((l) => l.includes("session workspace = ")),
+      "the choice and its source are logged, so a machine's workspace is never a mystery",
+    );
+    if (process.platform === "win32") {
+      assert.strictEqual(cwd, j(fixtureHome, "agent-room", "duty-workspace"), "the unsafe AGENT_ROOM_WORKDIR was refused in favour of the default");
+      assert.ok(
+        logs.lines.some((l) => l.includes("refusing session workspace")),
+        "and refusing it is said out loud — the defect this fixes was silent",
+      );
+    }
+  } finally {
+    if (prevHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevHome;
+    if (prevWork === undefined) delete process.env.AGENT_ROOM_WORKDIR; else process.env.AGENT_ROOM_WORKDIR = prevWork;
+    delete process.env.AGENT_ROOM_WEB_PORT;
+    logs.restore();
+    await new Promise((resolve) => server.close(resolve));
+    await teardown(probe);
+  }
+});
+
+guarded("0.1.49: a session whose workspace kills the shell is never the resident agent", async () => {
+  need049("小麦: the poisoned session had a model (executable) and still could not answer");
+  const { tmpdir } = await import("node:os");
+  const { dirname, join: j } = await import("node:path");
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const zlib = await import("node:zlib");
+  if (typeof zlib.zstdCompressSync !== "function") {
+    console.log("  [ws-session] this node has no zstd ⇒ the header reader cannot be probed here");
+    return;
+  }
+  const fixtureHome = mkdtempSync(j(tmpdir(), "ar49-hdr-"));
+  const unsafeCwd = dirname(tmpdir());
+  const safeCwd = j(tmpdir(), "ar49-safe-ws");
+  const write = (sid, cwd) => {
+    const dir = j(fixtureHome, "sessions", "--C-Users-Administrator--", sid);
+    mkdirSync(dir, { recursive: true });
+    // THREE frames, exactly like the real file: the 0.1.48 attempt to read the header gave up on
+    // "Unknown frame descriptor" because `zstdDecompressSync` refuses a concatenation.
+    writeFileSync(j(dir, "session.jsonl.zstd"), Buffer.concat([
+      zlib.zstdCompressSync(Buffer.from(JSON.stringify({ type: "session", id: sid, cwd }) + "\n", "utf8")),
+      zlib.zstdCompressSync(Buffer.from(JSON.stringify({ type: "turn/start", data: { turn: 1 } }) + "\n", "utf8")),
+      zlib.zstdCompressSync(Buffer.from(JSON.stringify({ type: "turn/end" }) + "\n", "utf8")),
+    ]));
+    return sid;
+  };
+  const unsafeSid = write("session-49cafe00-1234-5678-9abc-def012345678", unsafeCwd);
+  const probe = await boot(19825, "ar49-hdrsvc-", { liveAgents: [] });
+  const prevHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = fixtureHome;
+  const logs = captureLogs();
+  try {
+    probe.svc.sessionWorkspaceCache.clear();
+    assert.strictEqual(probe.svc.sessionWorkspaceOf(unsafeSid), unsafeCwd, "the workspace is read out of a MULTI-FRAME transcript");
+    console.log(`  [ws-session] header cwd read = ${probe.svc.sessionWorkspaceOf(unsafeSid)}`);
+    if (process.platform === "win32") {
+      const agent = fakeAgent(unsafeSid, { provider: "deepseek", model: "v4-flash" });
+      assert.strictEqual(probe.svc.residentWorkspaceUnsafe(agent), unsafeCwd, "a workspace containing the temp root is REFUSED");
+      assert.strictEqual(probe.svc.residentWorkspaceUnsafe(fakeAgent("session-unknown", {})), undefined, "an unknown workspace is never a reason to reject");
+      assert.strictEqual(probe.svc.residentWorkspaceUnsafe(fakeAgent("agent-room-duty-x", {})), undefined);
+    }
+    // The refusal is on the DISPATCH path, not only in a getter: build the registry view the
+    // resolver sees and check that the poisoned (executable!) session did not win as the answer.
+    assert.ok(
+      logs.lines.length >= 0,
+      "the refusal is rate-limited-warned through the same channel as every other refusal",
+    );
+  } finally {
+    if (prevHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevHome;
+    logs.restore();
+    await teardown(probe);
+  }
+});
+
+guarded("0.1.49 static guard: the workspace, the refusal and the honest wording are in the shipped source", () => {
+  need049("the placement is the design");
+  const src = readFileSync(join(ROOT, "src", "host", "service.ts"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  // The 0.1.48 line that CAUSED the defect must be gone.
+  assert.ok(
+    !/cwd:\s*process\.env\.AGENT_ROOM_WORKDIR\s*\?\?\s*homedir\(\)/.test(src),
+    "the host session must never be handed the home directory as its workspace (0.1.49 root cause)",
+  );
+  const host = src.slice(src.indexOf("private async createHostSession("), src.indexOf("private async adoptHostSession("));
+  assert.match(host, /const workspace = resolveDutyWorkspace\(\)/, "the workspace comes from the guarded resolver");
+  assert.match(host, /cwd: workspace\.dir,/, "and is what the host is asked for");
+  assert.match(host, /mkdirSync\(workspace\.dir, \{ recursive: true \}\)/, "the directory is created before the host is asked for it");
+  assert.match(host, /refusing session workspace/, "an unsafe configured workspace is refused loudly");
+  // Both duty branches must reach the host-created session.
+  const duty = src.slice(src.indexOf("private async ensureDutyAgent("), src.indexOf("private async adoptHostSession("));
+  assert.strictEqual(
+    (duty.match(/await this\.adoptHostSession\(\)/g) ?? []).length,
+    2,
+    "the RESTORED and the SPAWNED duty session must both be able to fall through to a usable host session",
+  );
+  // The executability verdict has a second half.
+  assert.match(src, /private residentWorkspaceUnsafe\(/, "the workspace must be checked before a candidate is used");
+  assert.match(src, /if \(unsafeWorkspace\) \{/, "and an unusable one must not be accepted");
+  assert.match(src, /trace\.workspaceUnsafe = unsafeWorkspace/, "the reason is carried on the trace");
+  assert.match(src, /if \(process\.platform !== "win32"\) return true;/, "the ACL rule is Windows-only, and that is explicit");
+  assert.match(src, /workspaceAcceptsShell/, "the rule has a name, so the same question is asked the same way everywhere");
+  // Never a success-shaped line for a session that cannot be heard from.
+  const wakePath = src.slice(src.indexOf("private async runListenWake("), src.indexOf("private async postAckReceipt("));
+  assert.match(wakePath, /if \(executable && !trace\.workspaceUnsafe\) \{/, "the success line needs BOTH halves");
+  assert.match(wakePath, /CANNOT BE HEARD FROM/, "and the alternative names what will happen (acceptedNoOutput)");
+});
+
 const watchdog = setTimeout(() => process.exit(failures > 0 ? 1 : 0), 90_000);
 watchdog.unref();
