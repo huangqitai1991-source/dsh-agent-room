@@ -677,6 +677,90 @@ guarded("usage errors exit 2 (error), never 1 (refused) -- the two are different
   assert.strictEqual(badMax.exit, 2, badMax.out);
 });
 
+/* ================================================================= test 8 */
+/* the bypass: the ONE way past the gates, and it is RECORDED rather than silent */
+
+guarded("bypass: without a --reason it is REFUSED, names what is missing, and writes NOTHING", () => {
+  needGate("the bypass entry point must exist");
+  const f = makeFixture("bypass-noreason");
+  f.seedRelease("0.1.49");
+  f.seedRelease(OLD);
+  const before = ledgerLines(f.ledger).length;
+
+  const r = runInProcess(["bypass", "--version", TARGET, "--ledger", f.ledger]);
+  assert.strictEqual(r.exit, 1, `a bypass with no reason must be refused: ${r.out}`);
+  assert.match(r.out, /RELEASE GATE bypass REFUSED/);
+  assert.match(r.out, /--reason is required and was not given/);
+  assert.match(r.out, /a bypass without a written reason is not a bypass/);
+  assert.strictEqual(ledgerLines(f.ledger).length, before,
+    'a refused bypass must leave NO trace: a {"gate":"bypass"} row would read as a bypass that happened');
+
+  // and as a real process, so the refusal's exit code is the operating system's
+  const p = runProcess(["bypass", "--version", TARGET, "--ledger", f.ledger], f.env);
+  assert.strictEqual(p.exit, 1, `the child process exit was ${p.exit}: ${p.out}`);
+  assert.match(p.out, /RELEASE GATE bypass REFUSED/);
+});
+
+guarded("bypass: with a --reason it is ALLOWED and lands EXACTLY one {\"gate\":\"bypass\"} row", () => {
+  needGate("the skip must be recorded, not silent");
+  const f = makeFixture("bypass-recorded");
+  f.seedRelease("0.1.49");
+  f.seedRelease(OLD);
+  const before = ledgerLines(f.ledger).length;
+  const why = "incident: the canary hooks are unconfigured and the fleet must move now";
+
+  const r = runInProcess(["bypass", "--version", TARGET, "--reason", why, "--ledger", f.ledger, "--actor", "operator"]);
+  assert.strictEqual(r.exit, 0, r.out);
+  assert.match(r.out, /RELEASE GATE bypass ALLOWED/);
+
+  const rows = ledgerLines(f.ledger);
+  assert.strictEqual(rows.length, before + 1, "a bypass writes exactly ONE row");
+  const row = rows.pop();
+  assert.deepStrictEqual(Object.keys(row).sort(), ["actor", "evidence", "gate", "reason", "ts", "verdict", "version"]);
+  assert.strictEqual(row.gate, "bypass");
+  assert.strictEqual(row.verdict, "bypassed");
+  assert.strictEqual(row.version, TARGET);
+  assert.strictEqual(row.actor, "operator");
+  assert.strictEqual(row.reason, why, "the written reason must be the reason in the ledger");
+  assert.match(row.ts, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+guarded("bypass: a bypass releases NOTHING -- the day's budget and the release count are untouched", () => {
+  needGate("a bypass must not be able to launder a release");
+  const f = makeFixture("bypass-inert");
+  f.seedRelease("0.1.49");
+  f.seedRelease(OLD);
+
+  const r = runInProcess(["bypass", "--version", TARGET, "--reason", "hotfix window", "--ledger", f.ledger]);
+  assert.strictEqual(r.exit, 0, r.out);
+  assert.strictEqual(ledgerLines(f.ledger).filter((x) => x.verdict === "released").length, 2,
+    "a bypass is a skip, never a release");
+
+  // the day is still full, so the very next version-count still refuses
+  const count = runInProcess(["version-count", "--version", TARGET, "--ledger", f.ledger]);
+  assert.strictEqual(count.exit, 1, count.out);
+  assert.match(count.out, /RELEASE GATE version-count REFUSED/);
+});
+
+guarded("fail closed: an unreadable config REFUSES the release even when the ledger says the canary passed", () => {
+  needGate("the config must be an INPUT, not an assumption");
+  const f = makeFixture("config-unreadable");
+  const canary = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger], f.env);
+  assert.strictEqual(canary.exit, 0, canary.out);
+  const accept = runInProcess(["accept", "--version", TARGET, "--author", "author", "--accepted-by", "reviewer-x", "--evidence", f.evidence, "--ledger", f.ledger]);
+  assert.strictEqual(accept.exit, 0, accept.out);
+
+  // the ledger holds a canary_passed row for this version, which is all the fleet gate reads.
+  const gone = join(f.dir, "no-such-config.json");
+  const r = runInProcess(["release", "--version", TARGET, "--evidence", f.evidence, "--author", "author", "--config", gone, "--ledger", f.ledger]);
+  assert.strictEqual(r.exit, 1, `an unreadable config must refuse, never pass: ${r.out}`);
+  assert.match(r.out, /RELEASE GATE canary REFUSED/);
+  assert.match(r.out, /no canary configuration/);
+  assert.match(r.out, /cannot be read/);
+  assert.strictEqual(ledgerLines(f.ledger).filter((x) => x.verdict === "released").length, 0,
+    "nothing may be recorded as released while the machine facts cannot be read");
+});
+
 /* ------------------------------------------------------------------ footer */
 
 test("summary", () => {

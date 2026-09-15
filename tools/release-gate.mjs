@@ -25,6 +25,19 @@
  *                     the rollback, proves the canary is no longer on the target version, and
  *                     refuses the rest of the fleet with the reason named.
  *
+ * EXPLICIT BYPASS -- ONE MORE GATE, AND IT IS A RECORD RATHER THAN A CHECK
+ *   Until 0.1.51 these four gates ran only when the caller asked for them (-ReleaseGate). A gate
+ *   that must be requested is a convention, not a mechanism: the DEFAULT path skipped every check.
+ *   The launcher now runs them always, and the only way past them is the `bypass` entry point,
+ *   which REQUIRES --reason and writes
+ *   {ts, version, gate:"bypass", verdict:"bypassed", actor, reason} to the ledger. A bypass with no
+ *   reason is REFUSED (exit 1) and writes NOTHING: a skip whose reason does not exist cannot be
+ *   recorded, so it does not happen.
+ *
+ * FAIL CLOSED
+ *   A gate that cannot read its inputs REFUSES: no config, unreadable config, unresolvable machine
+ *   facts, an unreadable ledger. None of those is a pass, and none of them is reported as one.
+ *
  * LEDGER (append-only, one JSON object per event)
  *   default D:\dsh\release-ledger.jsonl (--ledger / DSH_RELEASE_LEDGER override it)
  *   {ts, version, gate, verdict, actor, evidence, reason}
@@ -74,6 +87,7 @@ const USAGE = [
   "  fleet         --version <v> [--machine <id>]",
   "  release       --version <v> --evidence <file> --author <who> [--max <n>] [--override --reason <why>]",
   "  accept        --version <v> --accepted-by <who> --author <who> --evidence <file> [--verdict <v>]",
+  "  bypass        --version <v> --reason <why>   (skips the checks ON THE RECORD; refused without --reason)",
   "",
   "common:  [--ledger <file>] [--actor <who>] [--json]",
   "exit: 0 allowed | 1 refused (gate named, reason named) | 2 error",
@@ -228,7 +242,7 @@ function parseArgs(argv) {
   return out;
 }
 
-const GATES = new Set(["version-count", "evidence", "acceptance", "canary", "fleet", "release", "accept"]);
+const GATES = new Set(["version-count", "evidence", "acceptance", "canary", "fleet", "release", "accept", "bypass"]);
 
 /* ------------------------------------------------------------ gate 1: count */
 
@@ -722,6 +736,24 @@ export function runReleaseGate(argv = [], io = console, { now = null } = {}) {
     return allow(io, "fleet", g.detail);
   }
 
+  /* ---- bypass: the ONE way past the four gates, and it is recorded, not silent ---- */
+  if (args.gate === "bypass") {
+    const miss = missingArgs(args, ["version"]);
+    if (miss) return { exit: EXIT_ERROR, result: { error: miss } };
+    if (!args.reason) {
+      // NOTHING is written here on purpose. Every other refusal gets a ledger line because the
+      // line can carry the reason it refused on; a bypass refused for having NO reason has no
+      // reason to record, and a "bypass" row in the ledger would read as a bypass that happened.
+      return refuse(io, "bypass",
+        `--reason is required and was not given: a bypass without a written reason is not a bypass. ` +
+        `Re-run as: bypass --version ${args.version} --reason "<why the four gates cannot be run>"`);
+    }
+    recordEvent("bypass", "bypassed", { reason: args.reason });
+    return allow(io, "bypass",
+      `the four gates were SKIPPED for ${args.version} on purpose and this is now in the ledger ` +
+      `(${args.ledger}) as {gate:"bypass"} by ${args.actor}: ${args.reason}`);
+  }
+
   /* ---- release: all four preconditions, then one release event ---- */
   if (args.gate === "release") {
     const miss = missingArgs(args, ["version", "evidence", "author"]);
@@ -734,7 +766,13 @@ export function runReleaseGate(argv = [], io = console, { now = null } = {}) {
     checks.push(["evidence", g2]);
     const g3 = gateAcceptance({ events: ctx.ledger.events, version: args.version, author: args.author });
     checks.push(["acceptance", g3]);
-    const g4 = gateFleet({ events: ctx.ledger.events, version: args.version });
+    // FAIL CLOSED, and it is checked BEFORE the ledger: the fleet half of this gate reads the
+    // ledger, so with an unreadable config a stale "canary_passed" row could carry a release
+    // through while the machine facts are unavailable. Missing/unreadable config = refusal.
+    const g4 = ctx.config.error
+      ? { verdict: "refused", missing: `no canary configuration: the gate config cannot be read (${ctx.config.error}) - ` +
+          `a release whose machine facts cannot be read is refused, never passed` }
+      : gateFleet({ events: ctx.ledger.events, version: args.version });
     checks.push(["canary", g4]);
 
     const bad = checks.find(([, g]) => g.verdict === "refused");
