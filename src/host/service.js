@@ -7,7 +7,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { createSyncHealth, noteInbound, noteOutbound, shouldReassert, syncHealthView } from "./sync-health.js";
+import { createSyncHealth, noteInbound, noteOutbound, reassertRequest, shouldReassert, syncHealthView } from "./sync-health.js";
 import { Service } from "@deepseek-ai/cordis";
 import { OrgPersistence } from "./persistence.js";
 import { clearRefusedMarker, ensureBackupRoot, failLoud, isUuidShaped, nicknameProblem } from "./safety.js";
@@ -391,11 +391,8 @@ export class OrgService extends Service {
     if (!roomId) return { ok: false, reason: "no_sync_room" };
     const base = String(this.config.roomApiBase ?? process.env.DSH_ROOM_API ?? "http://127.0.0.1:3080").replace(/\/+$/, "");
     try {
-      const res = await fetch(`${base}/agent-room-api/rooms/${roomId}/listening`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ on: true }),
-      });
+      const req = reassertRequest({ roomId, base });
+      const res = await fetch(req.url, req.init);
       if (!res.ok) return { ok: false, reason: `http_${res.status}` };
       return { ok: true, roomId };
     } catch (error) {

@@ -112,3 +112,15 @@ export function shouldReassert(outcome = {}, attemptsSoFar = 0, maxAttempts = 1)
   if (attemptsSoFar >= maxAttempts) return false;
   return outcome.ok === true && outcome.queued === true;
 }
+/**
+ * The request that repairs a torn sync subscription (card-16), as pure data so it can be asserted
+ * without a host, a room or the plugin SDK. The service just performs it.
+ * @returns {{url: string, init: {method: string, headers: object, body: string}}}
+ */
+export function reassertRequest({ roomId, base = "http://127.0.0.1:3080" } = {}) {
+  const root = String(base).replace(/\/+$/, "");
+  return {
+    url: `${root}/agent-room-api/rooms/${roomId}/listening`,
+    init: { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ on: true }) },
+  };
+}
