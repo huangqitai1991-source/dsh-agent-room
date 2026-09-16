@@ -31,6 +31,16 @@ const MAX_SOCKET_BUFFER = 4 * 1024 * 1024;
 const STALE_SOCKET_LIMIT = 2;
 
 /**
+ * 房主不在时告诉成员"多久后再问一次"（D-49）。
+ *
+ * 取值来源：与本进程的心跳周期（30s）以及客户端 OWNER_WATCH_MS（30s）对齐。成员在房主离线期间
+ * 保持同一条 socket 打开、按这个节奏重发 relay.join，而不是把 20s 预算跑完后关掉重连 ——
+ * 2026-09-16 实测：一台成员这样空转了 68 次 join、601 次离线暂存、1608 次 join timeout 关闭，
+ * 而中继明明知道"房主不在"，却什么都没说。
+ */
+const OWNER_OFFLINE_RETRY_MS = 30_000;
+
+/**
  * 带背压保护的发送。返回是否真的发出去了。
  * 积压超限时主动 terminate，触发正常的 close 清理流程。
  */
@@ -139,6 +149,16 @@ wss.on("connection", (socket, req) => {
       }
       room.buffer = [];
     }
+    // D-49：房主回来了，告诉还在等的成员。成员此刻保持同一条 socket，收到这帧立刻重发
+    // relay.join —— 这才是"房主眨眼"不再变成"成员风暴"的关键一步。
+    for (const m of room.members.values()) {
+      if (m.socket.readyState === WebSocket.OPEN) {
+        safeSend(m.socket, JSON.stringify({ type: "relay.owner-online", payload: { roomId } }));
+      }
+    }
+    if (room.members.size > 0) {
+      console.log(`[relay] owner-online room=${roomId.slice(0, 8)} told ${room.members.size} member(s)`);
+    }
   } else if (role === "member") {
     const prev = room.members.get(agentId);
     if (prev && prev.socket !== socket) {
@@ -191,14 +211,23 @@ wss.on("connection", (socket, req) => {
           if (owner && owner.readyState === WebSocket.OPEN) {
             safeSend(owner, JSON.stringify({ type: "relay.frame", from: agentId, frame }));
           } else {
-            // 房主此刻不在（中继重启、房主网络抖动都会造成这种窗口）。
-            // 以前这里直接丢弃，成员只能白等整个握手超时再重连 —— 实测小黄在
-            // 这种窗口里要等满 89.999 秒。改成暂存，房主重连时按既有逻辑补发，
-            // 成员的握手就能在超时之前完成。
-            // 上限沿用 OFFLINE_BUFFER_LIMIT；成员若已放弃，补发的应答会被丢掉。
-            room.buffer.push({ from: agentId, frame });
-            if (room.buffer.length > OFFLINE_BUFFER_LIMIT) room.buffer.shift();
-            console.log(`[relay] relay.join buffered for owner-less room (buffered=${room.buffer.length})`);
+            // 每个成员只保留一条待处理 join：成员在房主离线期间会重发，若不去重，同一台机
+            // 的同一请求会被暂存 N 份（实测 601 条离线暂存，全是同一台成员机的重复请求）。
+            const already = room.buffer.some((b) => b.from === agentId && b.frame?.type === "relay.join");
+            if (!already) {
+              room.buffer.push({ from: agentId, frame });
+              if (room.buffer.length > OFFLINE_BUFFER_LIMIT) room.buffer.shift();
+            }
+            // D-49：把"为什么握不上手"说清楚。没有这一帧，成员无法区分「房主不在」和「链路坏了」，
+            // 只能把注定失败的握手重试到自己预算耗尽 —— 这正是 1608 次 join timeout 的来处。
+            safeSend(socket, JSON.stringify({
+              type: "relay.owner-offline",
+              payload: { retryAfterMs: OWNER_OFFLINE_RETRY_MS, roomId },
+            }));
+            console.log(
+              `[relay] relay.join owner-less: told ${String(agentId).slice(0, 12)} owner-offline ` +
+                `(retryAfterMs=${OWNER_OFFLINE_RETRY_MS}, buffered=${room.buffer.length}, deduped=${already})`,
+            );
           }
           return;
         }

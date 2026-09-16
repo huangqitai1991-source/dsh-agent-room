@@ -154,7 +154,18 @@ export type ServerFrame =
   /** Answer to `chat.stat` (0.1.35). */
   | { type: "chat.stat"; payload: { latestSeq: number; latestChatSeq: number } }
   /** Join result delivered through a relay (targeted to one member). */
-  | { type: "relay.joined"; payload: { ok: boolean; token?: string; ticket?: string; snapshot?: RoomSnapshot; error?: string } };
+  | { type: "relay.joined"; payload: { ok: boolean; token?: string; ticket?: string; snapshot?: RoomSnapshot; error?: string } }
+  /**
+   * Owner availability, announced by the RELAY (D-49).
+   *
+   * A member cannot tell "the room owner is not connected" from "my link is broken": both look like a
+   * handshake that never completes. Measured 2026-09-16 — one member burned 68 joins and 601 buffered
+   * joins, and every one of its 1608 closes was its OWN 20 s budget expiring, not the relay kicking
+   * it. The relay holds the owner slot, so it knows the difference and now says so; the member can
+   * hold one socket open through the outage instead of racing the owner's reconnect.
+   */
+  | { type: "relay.owner-offline"; payload: { retryAfterMs?: number; roomId?: string } }
+  | { type: "relay.owner-online"; payload: { roomId?: string } };
 
 export interface TaskCreatePayload {
   title: string;
