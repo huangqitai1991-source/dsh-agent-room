@@ -12,4 +12,5 @@ test/.release-publish-fixtures/
 test/.machine-facts-fixtures/
 # the profile-guard suite builds throwaway DSH homes, a real .tgz and a ledger here
 test/.profile-guard-fixtures/
-
+# the publish-studio-files suite writes throwaway script fixtures here
+test/.publish-studio-fixtures/
