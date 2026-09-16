@@ -44,6 +44,11 @@ import {
   visibleMemberIds,
   visibleMemberNodes,
 } from "./visibility.js";
+// The read-only architecture view (0.2.13). Named apart from visibility.js's `buildTree`, which is a
+// different thing: that one is a display projection keyed off `parentId` only, while org-tree.js is
+// the pure builder that also derives roles, keeps orphans visible and survives cycles. The dock draws
+// THIS one (see src/client.js "read-only architecture view").
+import { buildTree as buildOrgTree, treeLines as orgTreeLines } from "./org-tree.js";
 import { nowIso, uuid } from "./util.js";
 
 export class OrgError extends Error {
@@ -891,10 +896,15 @@ export class OrgService extends Service {
     const rooms = await this.collectRooms();
     const visibleIds = visibleMemberIds(this.state, viewer);
     const { summary } = summarizeVisibleTasks(rooms, visibleIds);
+    const orgTree = buildOrgTree(this.state.nodes);
     return {
       identity: identity ?? null,
       nodes: this.listNodes(),
       tree: buildTree(this.state),
+      // The read-only architecture view the dock draws, plus its text fallback. Computed here, once,
+      // by the pure module: the browser bundle cannot import host ESM (see src/client.js).
+      orgTree,
+      treeLines: orgTreeLines(orgTree),
       rev: typeof this.state.rev === "number" ? this.state.rev : 0,
       updatedAt: this.state.updatedAt ?? "",
       visibleMemberIds: [...visibleIds],
