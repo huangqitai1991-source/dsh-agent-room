@@ -10,4 +10,6 @@ test/.release-gate-fixtures/
 test/.release-publish-fixtures/
 # the machine-facts suite writes its facts/config/ledger fixtures here; per-run artefacts
 test/.machine-facts-fixtures/
+# the profile-guard suite builds throwaway DSH homes, a real .tgz and a ledger here
+test/.profile-guard-fixtures/
 
