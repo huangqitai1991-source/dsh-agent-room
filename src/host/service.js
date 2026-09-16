@@ -7,7 +7,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { createSyncHealth, noteInbound, noteOutbound, syncHealthView } from "./sync-health.js";
+import { createSyncHealth, noteInbound, noteOutbound, shouldReassert, syncHealthView } from "./sync-health.js";
 import { Service } from "@deepseek-ai/cordis";
 import { OrgPersistence } from "./persistence.js";
 import { clearRefusedMarker, ensureBackupRoot, failLoud, isUuidShaped, nicknameProblem } from "./safety.js";
@@ -343,13 +343,20 @@ export class OrgService extends Service {
     const roomId = options.roomId ?? this.config.syncRoomId;
     const label = options.label ?? "control-frame";
     if (!roomId) return { ok: false, attempts: 0, queued: false, unknown: false, status: undefined, reason: "no_sync_room" };
-    const outcome = await sendWithRetry(
+    let outcome = await sendWithRetry(
       (frame) => {
         const sent = this.agentRoom?.gateway?.sendChat?.(roomId, { text: frame, human: false });
         return sent ?? null;
       },
       text,
     );
+    // card-16: a QUEUED frame means the room channel is closed. Repair is ONE re-assert, then ONE
+    // retry -- never a storm (shouldReassert owns that boundary, and it has its own tests).
+    if (shouldReassert(outcome, 0) && typeof this.reassertSyncRoom === "function") {
+      try { await this.reassertSyncRoom(); } catch (e) { this.warnRateLimited("reassert", `[agent-org] re-assert failed: ${String(e)}`); }
+      const retry = await sendWithRetry((frame) => this.agentRoom?.gateway?.sendChat?.(roomId, { text: frame, human: false }) ?? null, text);
+      outcome = retry;
+    }
     noteOutbound(this.syncHealth, { ...outcome, label }, nowIso());
     if (!outcome.ok) {
       this.warnRateLimited(

@@ -95,3 +95,20 @@ export function syncHealthView(h) {
     degraded: isSyncDegraded(h),
   };
 }
+
+/**
+ * Should this failed control-frame write trigger ONE re-assert of the sync subscription?
+ *
+ * card-16. A `queued` outcome means agent-room queued the frame because the channel to the room is
+ * closed -- the established repair is to re-assert listening for that room, then retry ONCE.
+ * The rule is deliberately narrow, because the failure mode this replaces was "wait 45 s in
+ * silence", and the failure mode a careless fix introduces is a retry storm:
+ *   * only a QUEUED frame qualifies (a refused/unknown write is not a closed channel);
+ *   * never more than `maxAttempts` (default 1) re-asserts per call;
+ *   * an already-degraded record still gets its one attempt -- that is what repairs it.
+ * @returns {boolean}
+ */
+export function shouldReassert(outcome = {}, attemptsSoFar = 0, maxAttempts = 1) {
+  if (attemptsSoFar >= maxAttempts) return false;
+  return outcome.ok === true && outcome.queued === true;
+}
