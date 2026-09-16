@@ -209,8 +209,16 @@ export class ExecPlane {
 
     // Verified write (0.2.10): an instruction that never reached the target used
     // to cost the caller the whole 45s wait for an answer that could not come.
+    //
+    // 0.2.13 / card-16: `ok:true` is NOT the same as "sent". When the agent-room channel to the
+    // sync room is closed, agent-room QUEUES the frame for replay and reports
+    // {ok:true, queued:true} -- the instruction never left this machine, so waiting for an answer
+    // is waiting for nothing. Measured 2026-09-16: a node that left and rejoined its room tore its
+    // org subscription, and every exec to it then cost the sender a full 45s of silence, which
+    // reads as "the target is slow" instead of "the channel is closed". A refusal must name itself.
     const delivery = await this.send(encodeExec(payload), { label: "exec-instruction:" + id });
-    if (!delivery?.ok) {
+    const queued = delivery?.ok === true && delivery?.queued === true;
+    if (!delivery?.ok || queued) {
       const pending = this.pending.get(id);
       if (pending) {
         this.pending.delete(id);
@@ -223,7 +231,11 @@ export class ExecPlane {
         stdout: "",
         stderr: "",
         timedOut: false,
-        error: `exec instruction not delivered: ${delivery?.reason ?? "unknown"}`,
+        queued,
+        reason: queued ? "channel-not-open" : (delivery?.reason ?? "unknown"),
+        error: queued
+          ? "exec instruction NOT sent: the agent-room channel to the sync room is closed, so the frame was queued for replay instead of delivered. Re-assert the sync room (POST /agent-org-api/sync -- a leave/rejoin tears the org subscription), then retry."
+          : `exec instruction not delivered: ${delivery?.reason ?? "unknown"}`,
       };
     }
     return resultPromise;
