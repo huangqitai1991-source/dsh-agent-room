@@ -7,6 +7,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { createSyncHealth, noteInbound, noteOutbound, syncHealthView } from "./sync-health.js";
 import { Service } from "@deepseek-ai/cordis";
 import { OrgPersistence } from "./persistence.js";
 import { clearRefusedMarker, ensureBackupRoot, failLoud, isUuidShaped, nicknameProblem } from "./safety.js";
@@ -82,6 +83,10 @@ export class OrgService extends Service {
     this.agentRoom = ctx.agentRoom;
     this.lastEvent = null;
     this.syncReady = false;
+    // card-16 / 0.2.13: syncReady is set once, at boot, and never re-evaluated -- a torn channel was
+    // invisible here and only showed up as a sender waiting out its whole timeout. This record makes
+    // "can this node be reached?" a readable fact.
+    this.syncHealth = createSyncHealth();
     /**
      * Idempotency key + result cache (0.2.10): instruction id -> state
      * (executing/executed/failed) and the exact result body.
@@ -168,7 +173,7 @@ export class OrgService extends Service {
 
   /** @returns {{roomId?: string}} */
   async getSyncConfig() {
-    return { roomId: this.config.syncRoomId || "" };
+    return { roomId: this.config.syncRoomId || "", syncReady: this.syncReady === true, health: syncHealthView(this.syncHealth) };
   }
 
   /**
@@ -276,6 +281,8 @@ export class OrgService extends Service {
     const text = message?.text;
     if (!this.config.syncRoomId || roomId !== this.config.syncRoomId) return;
 
+    // card-16: a frame that ARRIVED is the strongest proof the room is readable from here.
+    noteInbound(this.syncHealth, nowIso(), { from: message?.from });
     // 0. LIVENESS (D-20, 0.2.13): this frame proves the sender's plugin is alive
     //    right now. Recorded before any branch, so a snapshot, an instruction or a
     //    result all count as contact — and a colleague who is merely OFF DUTY stops
@@ -343,6 +350,7 @@ export class OrgService extends Service {
       },
       text,
     );
+    noteOutbound(this.syncHealth, { ...outcome, label }, nowIso());
     if (!outcome.ok) {
       this.warnRateLimited(
         "delivery:" + label,
