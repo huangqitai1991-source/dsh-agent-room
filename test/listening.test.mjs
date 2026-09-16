@@ -512,6 +512,65 @@ guarded("static guard: the toggle persists, the boot restores, and nothing else 
   assert.match(persistence, /join\(this\.root, "listening\.json"\)/, "the intent file must live beside joined.json");
 });
 
+guarded("the listening route refuses a body it cannot understand instead of executing the opposite (0.1.51)", async () => {
+  // The field is `on`. Measured on the live host (2026-09-16): `POST {"listening":true}` -- the
+  // obvious wrong guess -- was read as `body.on === true` -> false, i.e. the route SILENTLY TURNED
+  // LISTENING OFF and answered `{ok:true}`. The room projection did not change, so it read as "the
+  // route is broken" rather than "the field name is wrong". This case pins all four shapes.
+  const memberDir = await mkdtemp(join(tmpdir(), "ar-listen-field-"));
+  const { owner, rooms } = await startOwner(19640);
+  const room = rooms[0];
+  const member = await startNode(19641, memberDir);
+  try {
+    await member.svc.gateway.joinRoom([room.serverAddress], { roomId: room.roomId });
+    await withApi(member.svc, async (api) => {
+      const url = `${api.base}/agent-room-api/rooms/${encodeURIComponent(room.roomId)}/listening`;
+      const rawPost = (body) => fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      // 1. a body with no usable field must be REFUSED, and must not change the state
+      const before = member.svc.isListening(room.roomId);
+      const empty = await rawPost({});
+      const emptyBody = await empty.json().catch(() => ({}));
+      console.log(`  POST {} -> ${empty.status} ${JSON.stringify(emptyBody)}`);
+      assert.strictEqual(empty.status, 400, "a body without `on` must be refused, not guessed at");
+      assert.match(String(emptyBody?.error ?? ""), /boolean `on`/, "the refusal must name the accepted field");
+      assert.strictEqual(member.svc.isListening(room.roomId), before, "a refused request must not change the state");
+
+      // 2. the alias everyone guesses first must WORK, not silently mean the opposite
+      const alias = await rawPost({ listening: true });
+      const aliasBody = await alias.json().catch(() => ({}));
+      console.log(`  POST {listening:true} -> ${alias.status} ${JSON.stringify(aliasBody)}`);
+      assert.strictEqual(alias.status, 200, "the `listening` alias must be accepted");
+      assert.strictEqual(member.svc.isListening(room.roomId), true, "the alias must turn listening ON, not OFF");
+      assert.strictEqual(aliasBody?.data?.listening, true, "the answer must ECHO the resulting state");
+
+      // 3. the canonical field keeps working, and echoes too
+      const off = await rawPost({ on: false });
+      const offBody = await off.json().catch(() => ({}));
+      console.log(`  POST {on:false} -> ${off.status} ${JSON.stringify(offBody)}`);
+      assert.strictEqual(off.status, 200);
+      assert.strictEqual(member.svc.isListening(room.roomId), false);
+      assert.strictEqual(offBody?.data?.listening, false);
+
+      // 4. GET reports this member's own flag (an owner's /state does not carry it)
+      const got = await fetch(url);
+      const gotBody = await got.json().catch(() => ({}));
+      console.log(`  GET -> ${got.status} ${JSON.stringify(gotBody)}`);
+      assert.strictEqual(got.status, 200);
+      assert.strictEqual(gotBody?.data?.listening, false, "GET must report the local listening flag");
+    });
+  } finally {
+    await stopNode(member);
+    await stopNode(owner);
+    await dropDir(memberDir);
+    await dropDir(owner.dir);
+  }
+});
+
 // Bounded, and deliberately UNREF'd: the suite tears its own services down, so
 // nothing here should hold the event loop. The guard exists only to turn a future
 // regression (a fresh leaked handle) into a DEFINITE exit code 1 after 120 s instead
