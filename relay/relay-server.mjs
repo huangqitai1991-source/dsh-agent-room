@@ -41,6 +41,25 @@ const STALE_SOCKET_LIMIT = 2;
 const OWNER_OFFLINE_RETRY_MS = 30_000;
 
 /**
+ * D-50：房主权威的租约（lease）。
+ *
+ * 中继是唯一裁决者，所以"权威"必须有一个**到期时间**和**序号**：
+ *   - 续租间隔 15s ＝ 本进程 30s ping 周期的一半（丢一次续租不影响判定）；
+ *   - 租约 TTL 45s ＝ 3 次续租；它 > 客户端 20s 握手预算（room-client.ts:81，成员不该被一次续租
+ *     丢失打断），并且 < 传输层判死窗口（ping 30s × 丢 2 ≈ 60s）⇒ **权威先失效、连接后判死**，
+ *     这样"丢包"和"关机/重启"都能在成员侧得到一句人话；
+ *   - 检查周期 5s：TTL 45s 的实际检测上限为 50s，且不随房间数变差。
+ */
+const LEASE_TTL_MS = Number(process.env.RELAY_LEASE_TTL_MS ?? 45_000);
+const LEASE_RENEW_MS = Number(process.env.RELAY_LEASE_RENEW_MS ?? 15_000);
+const LEASE_TICK_MS = Number(process.env.RELAY_LEASE_TICK_MS ?? 5_000);
+
+/** 新房间的初始租约：没有房主，epoch=0。 */
+function newLease() {
+  return { ownerAgentId: null, epoch: 0, renewedAt: 0, expiresAt: 0 };
+}
+
+/**
  * 带背压保护的发送。返回是否真的发出去了。
  * 积压超限时主动 terminate，触发正常的 close 清理流程。
  */
@@ -122,10 +141,10 @@ wss.on("connection", (socket, req) => {
 
   let room = rooms.get(roomId);
   if (!room) {
-    room = { owner: null, secret: null, members: new Map(), buffer: [] };
+    room = { owner: null, secret: null, members: new Map(), buffer: [], lease: newLease(), ownerAbsentNotified: false };
     rooms.set(roomId, room);
   }
-  console.log(`[relay] connect room=${roomId.slice(0, 8)} role=${role} agent=${String(agentId).slice(0, 12)} ownerOnline=${room.owner ? room.owner.readyState : "none"}`);
+  console.log(`[relay] connect room=${roomId.slice(0, 8)} role=${role} agent=${String(agentId).slice(0, 12)} ownerOnline=${room.owner ? room.owner.readyState : "none"} epoch=${room.lease.epoch}`);
 
   if (role === "owner") {
     const secret = url.searchParams.get("secret");
@@ -137,11 +156,64 @@ wss.on("connection", (socket, req) => {
       socket.close(4001, "relay secret mismatch");
       return;
     }
+    /* ---------------------------------------------------------------------------
+     * D-50: AUTHORITY HAS AN ORDER.
+     *
+     * Before this, the only rule was "whoever presents the right secret takes the owner slot"
+     * (`room.owner.close(4001, "owner replaced")`), with no epoch and no notion of authority
+     * expiring -- so a returning owner could always displace whoever took over, and two owners could
+     * each believe they were the authority. The rules below make the order explicit:
+     *
+     *   epoch > current  -> accepted ONLY when the authority actually lapsed (lease expired or the
+     *                       owner is absent); otherwise refused ("epoch ahead"): no early grabs.
+     *   epoch == current -> a reconnect by the CURRENT owner. Any other agent presenting the same
+     *                       epoch is refused ("owner present"): two owners cannot share an epoch.
+     *   epoch <  current -> refused ("stale epoch"). The caller has lost its authority and must
+     *                       demote itself to a member.
+     *   no epoch         -> 0.1.49-and-earlier owners (measured: the live fleet sends none). Kept
+     *                       working: accepted as a reconnect when the agentId matches the current
+     *                       owner, or when nobody holds the slot; REFUSED otherwise, which is the
+     *                       one behaviour change old clients see, and the one that stops a stale
+     *                       owner from overwriting a legitimate takeover.
+     * ------------------------------------------------------------------------- */
+    const epochParam = url.searchParams.get("epoch");
+    const claimedEpoch = epochParam === null ? null : Number(epochParam);
+    if (epochParam !== null && (!Number.isInteger(claimedEpoch) || claimedEpoch < 0)) {
+      socket.close(4001, "bad epoch");
+      return;
+    }
+    const lease = room.lease;
+    const lapsed = lease.expiresAt <= Date.now() || room.ownerAbsentNotified || !room.owner;
+    const currentOwnerId = lease.ownerAgentId;
+    const sameAgent = currentOwnerId !== null && currentOwnerId === agentId;
+    if (claimedEpoch === null) {
+      if (room.owner && room.owner.readyState === WebSocket.OPEN && !sameAgent && !room.ownerAbsentNotified) {
+        console.log(`[relay] owner REFUSED (no epoch) agent=${String(agentId).slice(0, 12)}: the slot is held by ${String(currentOwnerId ?? "?").slice(0, 12)}`);
+        socket.close(4001, "owner present");
+        return;
+      }
+    } else if (claimedEpoch < lease.epoch) {
+      console.log(`[relay] owner REFUSED (stale epoch ${claimedEpoch} < ${lease.epoch}) agent=${String(agentId).slice(0, 12)}`);
+      socket.close(4001, "stale epoch");
+      return;
+    } else if (claimedEpoch === lease.epoch && !sameAgent && room.owner && room.owner.readyState === WebSocket.OPEN && !lapsed) {
+      console.log(`[relay] owner REFUSED (epoch ${claimedEpoch} already held by another agent) agent=${String(agentId).slice(0, 12)}`);
+      socket.close(4001, "owner present");
+      return;
+    } else if (claimedEpoch > lease.epoch && !lapsed) {
+      console.log(`[relay] owner REFUSED (epoch ahead ${claimedEpoch} > ${lease.epoch}, authority has not lapsed) agent=${String(agentId).slice(0, 12)}`);
+      socket.close(4001, "epoch ahead");
+      return;
+    }
     room.secret = secret; // 首次登记 (TOFU)
-    if (room.owner && room.owner !== socket) {
+    const replaced = room.owner && room.owner !== socket;
+    if (replaced) {
       try { room.owner.close(4001, "owner replaced"); } catch { /* ignore */ }
     }
     room.owner = socket;
+    socket.__ownerEpoch = claimedEpoch === null ? lease.epoch : claimedEpoch;
+    room.lease = { ownerAgentId: agentId, epoch: socket.__ownerEpoch, renewedAt: Date.now(), expiresAt: Date.now() + LEASE_TTL_MS };
+    room.ownerAbsentNotified = false;
     // 房主重连成功：按 FIFO 补发离线期间暂存的业务帧，发完清空（尽力而为）。
     if (room.buffer.length > 0) {
       for (const item of room.buffer) {
@@ -151,13 +223,20 @@ wss.on("connection", (socket, req) => {
     }
     // D-49：房主回来了，告诉还在等的成员。成员此刻保持同一条 socket，收到这帧立刻重发
     // relay.join —— 这才是"房主眨眼"不再变成"成员风暴"的关键一步。
+    // D-50：这一帧同时带上 epoch 与 ownerAgentId，成员据此知道权威是否换了人。
     for (const m of room.members.values()) {
       if (m.socket.readyState === WebSocket.OPEN) {
-        safeSend(m.socket, JSON.stringify({ type: "relay.owner-online", payload: { roomId } }));
+        safeSend(m.socket, JSON.stringify({
+          type: "relay.owner-online",
+          payload: { roomId, epoch: room.lease.epoch, ownerAgentId: agentId, changed: replaced },
+        }));
       }
     }
     if (room.members.size > 0) {
-      console.log(`[relay] owner-online room=${roomId.slice(0, 8)} told ${room.members.size} member(s)`);
+      console.log(
+        `[relay] owner-online room=${roomId.slice(0, 8)} epoch=${room.lease.epoch} replaced=${replaced} ` +
+          `told ${room.members.size} member(s)`,
+      );
     }
   } else if (role === "member") {
     const prev = room.members.get(agentId);
@@ -252,6 +331,29 @@ wss.on("connection", (socket, req) => {
     // owner -> members
     let msg = null;
     try { msg = JSON.parse(raw); } catch { /* fall through to broadcast raw */ }
+    /* D-50: any frame from the owner is a sign of life -> renew the authority lease. Without this,
+     * an owner that is busy (long install, heavy transcript) would lose its authority to a standby
+     * that merely happened to be quieter. */
+    if (msg && msg.type === "relay.lease-renew") {
+      if (room.lease.ownerAgentId === agentId) {
+        room.lease.renewedAt = Date.now();
+        room.lease.expiresAt = Date.now() + LEASE_TTL_MS;
+        if (room.ownerAbsentNotified) {
+          room.ownerAbsentNotified = false;
+          console.log(`[relay] owner-recovered room=${roomId.slice(0, 8)} epoch=${room.lease.epoch} (lease renewed before any takeover)`);
+          for (const m of room.members.values()) {
+            if (m.socket.readyState === WebSocket.OPEN) {
+              safeSend(m.socket, JSON.stringify({ type: "relay.owner-online", payload: { roomId, epoch: room.lease.epoch, ownerAgentId: agentId, changed: false } }));
+            }
+          }
+        }
+      }
+      return;
+    }
+    if (room.lease.ownerAgentId === agentId && room.owner === socket) {
+      room.lease.renewedAt = Date.now();
+      room.lease.expiresAt = Date.now() + LEASE_TTL_MS;
+    }
     if (msg && msg.type === "relay.revoke" && typeof msg.agentId === "string") {
       const target = room.members.get(msg.agentId);
       if (target) {
@@ -280,6 +382,10 @@ wss.on("connection", (socket, req) => {
     );
     if (role === "owner") {
       if (room.owner === socket) room.owner = null;
+      /* D-50: the lease is NOT cleared here on purpose. A socket close is one symptom; the authority
+       * lapses on its own clock (LEASE_TTL_MS) and only then may anyone take over. Clearing it here
+       * would let a standby grab the room during a 1-second blip -- exactly the split-brain window
+       * this design exists to close. */
     } else {
       const entry = room.members.get(agentId);
       if (entry && entry.socket === socket) room.members.delete(agentId);
@@ -288,6 +394,34 @@ wss.on("connection", (socket, req) => {
   });
   socket.on("error", () => { /* close follows */ });
 });
+
+/**
+ * D-50：租约到期检查（5s 一跳）。到期只广播 `owner-absent`，**不关房主的 socket**：
+ * 丢包、笔记本休眠、进程重启在这条路上要能被成员读成"房主的问题"，而不是"房间坏了"。
+ * （关不关 socket 由既有 30s ping × 丢 2 次的传输层判定负责，两件事分开。）
+ */
+setInterval(() => {
+  for (const [roomId, room] of rooms) {
+    const lease = room.lease;
+    if (!lease.ownerAgentId) continue;
+    if (lease.expiresAt > Date.now()) continue;
+    if (room.ownerAbsentNotified) continue;
+    room.ownerAbsentNotified = true;
+    console.log(
+      `[relay] owner-absent room=${roomId.slice(0, 8)} owner=${String(lease.ownerAgentId).slice(0, 12)} ` +
+        `epoch=${lease.epoch} lease expired ${Math.round((Date.now() - lease.expiresAt) / 1000)}s ago ` +
+        `(a takeover may now claim epoch ${lease.epoch + 1})`,
+    );
+    for (const m of room.members.values()) {
+      if (m.socket.readyState === WebSocket.OPEN) {
+        safeSend(m.socket, JSON.stringify({
+          type: "relay.owner-absent",
+          payload: { roomId, epoch: lease.epoch, ownerAgentId: lease.ownerAgentId, retryAfterMs: OWNER_OFFLINE_RETRY_MS },
+        }));
+      }
+    }
+  }
+}, LEASE_TICK_MS);
 
 // 心跳: 清理死连接
 setInterval(() => {
