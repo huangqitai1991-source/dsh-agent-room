@@ -377,6 +377,31 @@ export class OrgService extends Service {
     return outcome;
   }
 
+  /**
+   * Re-assert the sync-room subscription (card-16).
+   *
+   * A leave/rejoin tears the agent-room channel that org control frames ride on, and the repair the
+   * upgrade script already uses for exactly this is to re-assert listening for the room
+   * (POST /agent-room-api/rooms/<id>/listening {on:true}) -- measured 2026-09-16, that call reopened
+   * a torn channel and exec started answering again within a second. Org calls the same door instead
+   * of inventing a new one; the base URL is overridable for tests and for a host on another port.
+   */
+  async reassertSyncRoom() {
+    const roomId = this.config.syncRoomId;
+    if (!roomId) return { ok: false, reason: "no_sync_room" };
+    const base = String(this.config.roomApiBase ?? process.env.DSH_ROOM_API ?? "http://127.0.0.1:3080").replace(/\/+$/, "");
+    try {
+      const res = await fetch(`${base}/agent-room-api/rooms/${roomId}/listening`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ on: true }),
+      });
+      if (!res.ok) return { ok: false, reason: `http_${res.status}` };
+      return { ok: true, roomId };
+    } catch (error) {
+      return { ok: false, reason: String(error?.message ?? error) };
+    }
+  }
   /** One warning per key per minute. */
   warnRateLimited(key, message) {
     const now = Date.now();
