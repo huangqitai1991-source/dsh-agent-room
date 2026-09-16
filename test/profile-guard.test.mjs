@@ -26,7 +26,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const guard = await import(pathToFileURL(join(ROOT, "tools", "profile-guard.mjs")).href);
-const { EXIT_OK, EXIT_REPAIRED, EXIT_STILL_BROKEN, EXIT_USAGE, checkProfile, declaredTarballs, parseArgv, runProfileGuard } = guard;
+const { EXIT_OK, EXIT_REPAIRED, EXIT_STILL_BROKEN, EXIT_USAGE, checkProfile, declaredTarballs, freezeDeclaration, parseArgv, restoreDeclaration, runProfileGuard } = guard;
 
 let failures = 0;
 const guarded = (name, fn) =>
@@ -170,6 +170,37 @@ guarded("--repair fixes a pruned profile by extracting its own tarball (no packa
   const rows = readFileSync(ledger, "utf8").trim().split(/\r?\n/).map((l) => JSON.parse(l));
   assert.strictEqual(rows.at(-1).verdict, "repaired");
   assert.strictEqual(rows.at(-1).actions.some((a) => a.step === "tar extract" && a.ok === true), true);
+  // The successful extraction is `status: 0`. Window W-D49h-1: that row used to be pushed raw, so it
+  // was the ONE row in the ledger with a bare number and no family beside it -- a bare status is
+  // exactly what this file exists to stop handing out (reported by 小婷 from a real run).
+  const tarRow = rows.at(-1).actions.find((a) => a.step === "tar extract");
+  assert.strictEqual(tarRow.status, 0);
+  assert.strictEqual(tarRow.statusHex, "0x00000000", "a status of 0 must still carry its hex");
+  assert.strictEqual(tarRow.statusSigned, 0);
+  assert.strictEqual(tarRow.statusFamily, "unrecognized", "0 belongs to no failure family, and no name may be invented for it");
+  assert.strictEqual(tarRow.statusName, null);
+});
+
+guarded("freezeDeclaration covers the lockfile the package manager in use actually writes", () => {
+  // An npm-type profile has `package-lock.json`; a pnpm-type one has `pnpm-lock.yaml`. Freezing only the
+  // pnpm name restored the declaration without its lock on an npm machine (小婷, window W-D49h-1).
+  const { dir } = fakeHome("npmlock", { deps: {}, bundles: [] });
+  writeFileSync(join(dir, "package-lock.json"), JSON.stringify({ lockfileVersion: 3, name: "p-web" }));
+  const frozen = freezeDeclaration(dir);
+  const lock = frozen.files.find((f) => f.name === "package-lock.json");
+  assert.ok(lock, "package-lock.json must be in the freeze list");
+  assert.strictEqual(lock.present, true);
+  assert.match(lock.sha256, /^[0-9a-f]{64}$/);
+  // damage it the way an installer would, then put it back
+  writeFileSync(join(dir, "package-lock.json"), JSON.stringify({ lockfileVersion: 3, name: "p-web", changed: true }));
+  const restored = restoreDeclaration(frozen);
+  const lockBack = restored.files.find((f) => f.name === "package-lock.json");
+  assert.strictEqual(lockBack.ok, true);
+  assert.strictEqual(readFileSync(join(dir, "package-lock.json"), "utf8"), JSON.stringify({ lockfileVersion: 3, name: "p-web" }));
+  // a lockfile this profile never had must NOT be scored as a failed restore
+  const pnpm = restored.files.find((f) => f.name === "pnpm-lock.yaml");
+  assert.strictEqual(pnpm.ok, true);
+  assert.strictEqual(pnpm.action, "absent-before-and-after");
 });
 
 guarded("a tarball that is itself missing is REPORTED, never invented -> still exit 11", () => {
@@ -206,6 +237,78 @@ guarded("END TO END: the real `dsh --dump-config` is the judge (a valid profile 
   const r = runProfileGuard(["--profile", "web", "--dsh-home", home], silent);
   assert.strictEqual(r.exit, EXIT_OK, JSON.stringify(r.result));
   assert.strictEqual(r.result.verdict, "ok");
+});
+
+/**
+ * Run node with stdio to FILES, not pipes: a confined process may not hand a child a pipe (measured
+ * here: `spawnSync … EPERM` and `node --test` itself failing with `spawn EPERM`). Same boundary the
+ * file's own execFileSync2 exists for.
+ */
+function runNodeToFile(args, { env = {} } = {}) {
+  mkdirSync(FIXTURE_ROOT, { recursive: true });
+  const tag = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const outLog = join(FIXTURE_ROOT, `nc-out-${tag}.log`);
+  const errLog = join(FIXTURE_ROOT, `nc-err-${tag}.log`);
+  const outFd = openSync(outLog, "w");
+  const errFd = openSync(errLog, "w");
+  try {
+    const r = spawnSync(process.execPath, args, {
+      windowsHide: true,
+      detached: false,
+      env: { ...process.env, ...env },
+      stdio: ["ignore", outFd, errFd],
+    });
+    return {
+      status: r.status,
+      out: existsSync(outLog) ? readFileSync(outLog, "utf8") : "",
+      err: existsSync(errLog) ? readFileSync(errLog, "utf8") : "",
+    };
+  } finally {
+    try { closeSync(outFd); } catch { /* ignore */ }
+    try { closeSync(errFd); } catch { /* ignore */ }
+    for (const f of [outLog, errLog]) { try { rmSync(f, { force: true }); } catch { /* ignore */ } }
+  }
+}
+
+/* ------------------------------------------------ the file NAME is not a switch (D-49f) */
+
+/**
+ * MEASURED 2026-09-16 on the published bytes (376204ea…): the entry check was
+ * `process.argv[1].endsWith("profile-guard.mjs")`, so the FILE NAME decided whether the gate ran at
+ * all. A copy under any other name exited 0 with zero stdout, zero stderr and zero ledger rows --
+ * a green verdict from a judgement that never happened, which is exactly the silent-pass class this
+ * workstream exists to remove. Reported by 小婷 with a reproduction; reproduced here before fixing.
+ */
+guarded("a renamed copy of the guard is an invocation, never a silent 0", () => {
+  const dir = join(FIXTURE_ROOT, "namecheck");
+  mkdirSync(dir, { recursive: true });
+  const renamed = join(dir, "pub-guard-now.mjs");
+  writeFileSync(renamed, readFileSync(join(ROOT, "tools", "profile-guard.mjs")));
+  const home = join(dir, "home");
+  const ledger = join(dir, "ledger.jsonl");
+  const r = runNodeToFile([renamed, "--profile", "web", "--dsh-home", home, "--zzz-not-a-flag", "--ledger", ledger]);
+  assert.notStrictEqual(r.status, 0, "a renamed copy must not exit 0");
+  assert.strictEqual(r.status, EXIT_USAGE, "an unusable invocation is a usage error");
+  assert.match(r.err, /unknown argument|--profile is required/, "it must say what was wrong");
+  assert.ok(existsSync(ledger), "the refusal must leave a ledger row");
+  assert.match(readFileSync(ledger, "utf8"), /"verdict":"usage"/);
+});
+
+guarded("importing the guard as a library stays silent; importing it WITH arguments refuses", () => {
+  const dir = join(FIXTURE_ROOT, "namecheck2");
+  mkdirSync(dir, { recursive: true });
+  const importer = join(dir, "importer.mjs");
+  const guardUrl = pathToFileURL(join(ROOT, "tools", "profile-guard.mjs")).href;
+  writeFileSync(importer, `import { freezeDeclaration } from ${JSON.stringify(guardUrl)};\nconsole.log("typed=" + typeof freezeDeclaration);\n`);
+  // library use: no arguments of its own -> silent, and the import works
+  const plain = runNodeToFile([importer]);
+  assert.strictEqual(plain.status, 0, plain.err);
+  assert.match(plain.out, /typed=function/);
+  // the same import, but the caller passed CLI arguments: someone tried to RUN this file by a name
+  // that is not its own, so exiting 0 would be the false PASS again
+  const withArgs = runNodeToFile([importer, "--profile", "web"]);
+  assert.strictEqual(withArgs.status, EXIT_USAGE, withArgs.out);
+  assert.match(withArgs.err, /is not this file/);
 });
 
 guarded("summary", () => {
