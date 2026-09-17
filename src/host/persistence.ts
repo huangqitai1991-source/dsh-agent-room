@@ -23,7 +23,7 @@
  */
 
 import { mkdir, open, readFile, rename, rm, writeFile, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import type { AgentIdentity, ChatMessage, JoinedRoomRecord, Room } from "../types.js";
 import { assertNotCorrupt, backupBeforeWrite, isUuidShaped, raiseCorrupt, readJsonConfig, stripBom } from "./safety.js";
 
@@ -48,12 +48,70 @@ function report(what: string, error: unknown): void {
   }
 }
 
+/** target file -> tail of the in-process write chain, shared by every writer in this plugin. */
+const configWriteChains = new Map<string, Promise<void>>();
+
+/**
+ * The ONE atomic JSON write in this plugin (0.1.52).
+ *
+ * WHY THIS IS EXPORTED
+ *   This module has had the hardened path since 0.1.26 (unique tmp per attempt, in-process
+ *   serialization per target, rename retries) while `service.ts` wrote FOUR config files
+ *   (reply-agent.json, resident-model.json, listening.json, relay-config.json) with a bare
+ *   `writeFile`. On 2026-09-17 a reply-agent.json was found as a valid JSON object followed by eight
+ *   stale bytes of the PREVIOUS, longer content:
+ *       { "replyAgentId": "session-…891b93"
+ *       }eae76"          <- the tail nobody truncated
+ *       }
+ *   A config this plugin cannot parse is FATAL BY DESIGN (see safety.ts), so 76 bytes of state took
+ *   the whole host down: `dsh: fatal load failure: CorruptConfigError`. The read side is right; the
+ *   write side was the hole. So every config write goes through here now.
+ */
+export function writeJsonAtomic(file: string, value: unknown, ensureDirs?: () => Promise<void>): Promise<void> {
+  const previous = configWriteChains.get(file) ?? Promise.resolve();
+  const next = previous
+    .then(() => writeJsonAtomicOnce(file, value, ensureDirs))
+    .catch((error) => report(`write ${file}`, error));
+  configWriteChains.set(file, next);
+  void next.finally(() => {
+    if (configWriteChains.get(file) === next) configWriteChains.delete(file);
+  });
+  return next;
+}
+
+async function writeJsonAtomicOnce(file: string, value: unknown, ensureDirs?: () => Promise<void>): Promise<void> {
+  if (ensureDirs) await ensureDirs();
+  else await mkdir(dirname(file), { recursive: true });
+  const payload = JSON.stringify(value, null, 2);
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
+    // Unique per attempt: overlapping writers (same process or another one)
+    // can never consume each other's tmp file.
+    const tmp = `${file}.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+    try {
+      await writeFile(tmp, payload, "utf8");
+      await rename(tmp, file);
+      return;
+    } catch (error) {
+      lastError = error;
+      const code = errorCode(error);
+      try {
+        await rm(tmp, { force: true });
+      } catch {
+        /* ignore */
+      }
+      if (!RETRYABLE_RENAME.has(code)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
+    }
+  }
+  throw lastError ?? new Error("atomic write failed");
+}
+
 export class Persistence {
   readonly root: string;
   private readonly roomsDir: string;
   private readonly messagesDir: string;
   /** target file -> tail of the in-process write chain (serializes saves). */
-  private readonly writeChains = new Map<string, Promise<void>>();
 
   constructor(root: string) {
     this.root = root;
@@ -87,42 +145,9 @@ export class Persistence {
    * logged, never thrown — a failed save must not crash the host.
    */
   private writeJsonAtomic(file: string, value: unknown): Promise<void> {
-    const previous = this.writeChains.get(file) ?? Promise.resolve();
-    const next = previous
-      .then(() => this.writeJsonAtomicOnce(file, value))
-      .catch((error) => report(`write ${file}`, error));
-    this.writeChains.set(file, next);
-    void next.finally(() => {
-      if (this.writeChains.get(file) === next) this.writeChains.delete(file);
-    });
-    return next;
-  }
-
-  private async writeJsonAtomicOnce(file: string, value: unknown): Promise<void> {
-    await this.ensureDirs();
-    const payload = JSON.stringify(value, null, 2);
-    let lastError: unknown = null;
-    for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
-      // Unique per attempt: overlapping writers (same process or another one)
-      // can never consume each other's tmp file.
-      const tmp = `${file}.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}.tmp`;
-      try {
-        await writeFile(tmp, payload, "utf8");
-        await rename(tmp, file);
-        return;
-      } catch (error) {
-        lastError = error;
-        const code = errorCode(error);
-        try {
-          await rm(tmp, { force: true });
-        } catch {
-          /* ignore */
-        }
-        if (!RETRYABLE_RENAME.has(code)) throw error;
-        await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
-      }
-    }
-    throw lastError ?? new Error("atomic write failed");
+    // One implementation, two callers: the class keeps its own directory setup, and `service.ts`
+    // uses the same exported function for the four config files it writes.
+    return writeJsonAtomic(file, value, () => this.ensureDirs());
   }
 
   /* ------------------------------ identity ----------------------------- */

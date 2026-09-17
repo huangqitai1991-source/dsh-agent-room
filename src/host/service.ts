@@ -7,7 +7,7 @@
  * started PeerServer for owned rooms.
  */
 
-import { writeFile } from "node:fs/promises";
+import { writeJsonAtomic } from "./persistence.js";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { homedir, hostname, tmpdir } from "node:os";
@@ -1180,7 +1180,7 @@ export class AgentRoomService extends Service {
       // sessions), and this file is what re-attaches to it after a restart.
       this.persistedReplyAgentId = sessionId;
       if (this.replyAgentFile) {
-        void writeFile(this.replyAgentFile, JSON.stringify({ replyAgentId: sessionId }, null, 2), "utf8").catch(() => { /* non-fatal */ });
+        void writeJsonAtomic(this.replyAgentFile, { replyAgentId: sessionId }).catch(() => { /* non-fatal */ });
       }
       this.activation.noteHostSessionCreated(true);
       this.diag(
@@ -1209,10 +1209,9 @@ export class AgentRoomService extends Service {
   private saveResidentModel(selection: { provider: string; model: string }, source: string): void {
     this.persistedResidentModel = selection;
     if (!this.residentModelFile) return;
-    void writeFile(
+    void writeJsonAtomic(
       this.residentModelFile,
-      JSON.stringify({ ...selection, source, at: new Date().toISOString() }, null, 2),
-      "utf8",
+      { ...selection, source, at: new Date().toISOString() },
     ).catch(() => { /* non-fatal: the next resolution just has one fewer source */ });
   }
 
@@ -1368,7 +1367,7 @@ export class AgentRoomService extends Service {
     const id = agent.id ?? agent.sessionId;
     if (!id || !this.replyAgentFile) return;
     this.persistedReplyAgentId = id;
-    void writeFile(this.replyAgentFile, JSON.stringify({ replyAgentId: id }, null, 2), "utf8").catch(() => { /* non-fatal */ });
+    void writeJsonAtomic(this.replyAgentFile, { replyAgentId: id }).catch(() => { /* non-fatal */ });
   }
 
   /**
@@ -1845,7 +1844,7 @@ export class AgentRoomService extends Service {
     const snapshot = [...this.listeningRooms];
     const file = this.listeningFile;
     this.listeningSave = this.listeningSave
-      .then(() => writeFile(file, JSON.stringify({ rooms: snapshot }, null, 2), "utf8"))
+      .then(() => writeJsonAtomic(file, { rooms: snapshot }))
       .catch((error) => {
         // A failed save must not take the room loop down, but it must be visible:
         // a machine that believes it will come back listening and will not is
@@ -3682,7 +3681,7 @@ export class AgentRoomService extends Service {
     this.config.relay = next;
     this.relayConfigured = Boolean(next);
     try {
-      await writeFile(this.relayConfigFile, JSON.stringify({ relay: next ?? null }, null, 2), "utf8");
+      await writeJsonAtomic(this.relayConfigFile, { relay: next ?? null });
     } catch (error) {
       this.ctx.logger?.warn?.("[agent-room] failed to persist relay config: %s", String(error));
     }
