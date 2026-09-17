@@ -107,7 +107,9 @@ const USAGE = [
   "  evidence      --version <v> --evidence <file> [--author <who>]",
   "  acceptance    --version <v> --author <who>",
   "  canary        --version <v> --facts <file> [--machine <id>] [--config <file>]",
-  "                [--facts-max-age-sec <n>] [--expect-version <v>]   (never installs anything)",
+  "                [--facts-max-age-sec <n>] [--expect-version <v>] [--plugin room|org]",
+  "                (never installs anything; --plugin defaults to room and selects WHICH plugin's",
+  "                 measured version the target must match)",
   "  fleet         --version <v> [--machine <id>]",
   "  release       --version <v> --evidence <file> --author <who> [--max <n>] [--override --reason <why>]",
   "  accept        --version <v> --accepted-by <who> --author <who> --evidence <file> [--verdict <v>]",
@@ -232,12 +234,12 @@ function parseArgs(argv) {
     gate: null, version: null, evidence: null, author: null, actor: null, reason: null,
     max: null, override: false, machine: null, config: null, ledger: null, acceptedBy: null,
     verdict: null, expectVersion: null, json: false, quiet: false, allowDowngrade: false,
-    hours: null, fixtures: null, facts: null, factsMaxAgeSec: null,
+    hours: null, fixtures: null, facts: null, factsMaxAgeSec: null, plugin: null,
   };
   const takesValue = new Set([
     "--version", "--evidence", "--author", "--actor", "--reason", "--max", "--machine",
     "--config", "--ledger", "--accepted-by", "--verdict", "--expect-version", "--hours",
-    "--fixtures", "--facts", "--facts-max-age-sec",
+    "--fixtures", "--facts", "--facts-max-age-sec", "--plugin",
   ]);
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
@@ -250,7 +252,7 @@ function parseArgs(argv) {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith("--")) return { error: `${a} needs a value` };
       i += 1;
-      const key = { "--version": "version", "--evidence": "evidence", "--author": "author", "--actor": "actor", "--reason": "reason", "--max": "max", "--machine": "machine", "--config": "config", "--ledger": "ledger", "--accepted-by": "acceptedBy", "--verdict": "verdict", "--expect-version": "expectVersion", "--hours": "hours", "--fixtures": "fixtures", "--facts": "facts", "--facts-max-age-sec": "factsMaxAgeSec" }[a];
+      const key = { "--version": "version", "--evidence": "evidence", "--author": "author", "--actor": "actor", "--reason": "reason", "--max": "max", "--machine": "machine", "--config": "config", "--ledger": "ledger", "--accepted-by": "acceptedBy", "--verdict": "verdict", "--expect-version": "expectVersion", "--hours": "hours", "--fixtures": "fixtures", "--facts": "facts", "--facts-max-age-sec": "factsMaxAgeSec", "--plugin": "plugin" }[a];
       out[key] = v;
       continue;
     }
@@ -528,6 +530,7 @@ export function gateCanary({ args, config, ledger, ts }) {
     version,
     expect,
     legacyVersion,
+    plugin: args.plugin,
   });
   if (judged.verdict === "refused") {
     return { ...judged, machine: designated, canaryVersion: judged.probedVersion ?? legacyVersion };
@@ -574,7 +577,17 @@ export function gateCanary({ args, config, ledger, ts }) {
  * is precisely the difference D-42 was made of -- the disk was new while the process still ran the
  * old plugin.
  */
-export function judgeCanaryFacts({ factsPath, designated, maxAgeSec = DEFAULT_FACTS_MAX_AGE_SEC, ts, version, expect = null, legacyVersion = null }) {
+export function judgeCanaryFacts({ factsPath, designated, maxAgeSec = DEFAULT_FACTS_MAX_AGE_SEC, ts, version, expect = null, legacyVersion = null, plugin = "room" }) {
+  // WHICH PLUGIN IS THIS RELEASE? A version string alone does not say: agent-room ships 0.1.x and
+  // agent-org ships 0.2.x, both from the same machines, and the probe reports both. `--plugin`
+  // selects the measured field the target version must satisfy. The default is the room plugin, so
+  // every existing caller behaves exactly as before; an unknown value is refused (see below) rather
+  // than silently treated as "room", because a typo must not quietly judge the wrong plugin.
+  const pluginArg = String(plugin ?? "room").trim().toLowerCase();
+  if (pluginArg !== "room" && pluginArg !== "org") {
+    return { verdict: "refused", missing: `--plugin ${JSON.stringify(String(plugin))} is not a plugin this gate knows: use "room" (agent-room) or "org" (agent-org)` };
+  }
+  const which = pluginArg;
   if (!factsPath) {
     return { verdict: "refused", missing:
       "no --facts file was given: the canary is judged on MEASURED facts (tools/machine-facts.mjs), " +
@@ -612,39 +625,54 @@ export function judgeCanaryFacts({ factsPath, designated, maxAgeSec = DEFAULT_FA
   if (row.unreachable) {
     return { verdict: "refused", ageSec, missing: `the canary ${designated} could NOT be probed: ${row.unreachable}` };
   }
+  // The measured version of the plugin this release is about. An org release judged against facts
+  // that never measured org must REFUSE BY NAME: "we did not look" is not "it matches".
+  const measured = which === "org" ? (row.orgVersion ?? null) : row.pluginVersion;
+  if (which === "org" && (measured === null || measured === undefined || measured === "")) {
+    return { verdict: "refused", ageSec, missing:
+      `the facts in ${factsPath} carry no agent-org measurement for ${designated} (the probe reported only the room plugin) ` +
+      `. Re-probe with a tools/machine-facts.mjs that reports orgPlugin, then run this gate again` };
+  }
   if (row.shape?.ack !== true || row.shape?.activation !== true) {
-    return { verdict: "refused", probedVersion: row.pluginVersion, ageSec, missing:
+    return { verdict: "refused", plugin: which, probedVersion: measured, ageSec, missing:
       `the canary ${designated} is not showing the live plugin's shape ` +
       `(ack=${row.shape?.ack === true}, activation=${row.shape?.activation === true}); ` +
       `a machine whose own /state does not carry both blocks is not a machine this gate can certify` };
   }
-  if (row.loadedAfterDisk !== true) {
-    return { verdict: "refused", probedVersion: row.pluginVersion, ageSec, missing:
-      `the canary ${designated} did not load the bytes on its disk: hostStart=${row.hostStart} is not at or after ` +
-      `the install time=${row.installMtime}` + (row.hostStart === null ? " (hostStart is not readable)" : "") +
+  const loadedAfterDisk = which === "org" ? row.orgLoadedAfterDisk : row.loadedAfterDisk;
+  const installMtime = which === "org" ? row.orgInstallMtime : row.installMtime;
+  const libHash = which === "org" ? row.orgLibHash : row.libHash;
+  if (loadedAfterDisk !== true) {
+    return { verdict: "refused", plugin: which, probedVersion: measured, ageSec, missing:
+      `the canary ${designated} did not load the ${which === "org" ? "agent-org" : "agent-room"} bytes on its disk: ` +
+      `hostStart=${row.hostStart} is not at or after the install time=${installMtime}` +
+      (row.hostStart === null ? " (hostStart is not readable)" : "") +
       `. This is D-42: the upgrade reported success, the disk was new, and the running process was still the old build` };
   }
-  if (row.pluginVersion !== version) {
-    return { verdict: "refused", probedVersion: row.pluginVersion, ageSec, missing:
-      `the canary ${designated} is RUNNING ${row.pluginVersion}, not the target ${version}` +
+  if (measured !== version) {
+    return { verdict: "refused", plugin: which, probedVersion: measured, ageSec, missing:
+      `the canary ${designated} is RUNNING ${which === "org" ? "agent-org " : ""}${measured}, not the target ${version}` +
       (expect ? ` (expected ${expect})` : "") +
       `. Install the target on the canary, re-probe it, then run this gate again -- this gate never installs anything` };
   }
-  if (legacyVersion !== null && legacyVersion !== undefined && String(legacyVersion).trim() !== "" && String(legacyVersion).trim() !== row.pluginVersion) {
-    return { verdict: "refused", probedVersion: row.pluginVersion, ageSec, missing:
+  // The hand-written version file is the ROOM plugin's file (config.machines[].versionFile): it may
+  // only ever REFUSE, and it says nothing about agent-org, so it is not consulted for an org release.
+  if (which === "room" && legacyVersion !== null && legacyVersion !== undefined && String(legacyVersion).trim() !== "" && String(legacyVersion).trim() !== measured) {
+    return { verdict: "refused", plugin: which, probedVersion: measured, ageSec, missing:
       `the hand-written version file for ${designated} says ${JSON.stringify(String(legacyVersion).trim())} while the machine ` +
-      `was measured RUNNING ${row.pluginVersion}; a hand-typed fact that disagrees with the measurement is refused` };
+      `was measured RUNNING ${measured}; a hand-typed fact that disagrees with the measurement is refused` };
   }
   return {
     verdict: "allowed",
-    probedVersion: row.pluginVersion,
+    plugin: which,
+    probedVersion: measured,
     ageSec,
     detail:
-      `canary ${designated} is RUNNING ${row.pluginVersion} (measured ${ageSec}s ago): pid ${row.hostPid}, ` +
-      `hostStarted ${row.hostStart} >= install time ${row.installMtime} (package dir; file mtimes are ` +
-      `npm-normalised to 1985 and cannot be used), libHash ${row.libHash}, ` +
+      `canary ${designated} is RUNNING ${which === "org" ? "agent-org " : ""}${measured} (measured ${ageSec}s ago): pid ${row.hostPid}, ` +
+      `hostStarted ${row.hostStart} >= ${which === "org" ? "org " : ""}install time ${installMtime} (package dir; file mtimes are ` +
+      `npm-normalised to 1985 and cannot be used), ${which === "org" ? "org" : ""}libHash ${libHash}, ` +
       `live shape ack+activation both present` +
-      (legacyVersion ? `, hand-written file agrees (${String(legacyVersion).trim()}) and was not needed` : ""),
+      (which === "room" && legacyVersion ? `, hand-written file agrees (${String(legacyVersion).trim()}) and was not needed` : ""),
   };
 }
 

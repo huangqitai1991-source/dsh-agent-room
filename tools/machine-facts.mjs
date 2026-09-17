@@ -93,6 +93,20 @@ export const TEMPLATE_POSIX = [
   'echo "stateBytes=$(printf %s "$S" | wc -c | tr -d " ")"',
   'echo "ackBlock=$(printf %s "$S" | grep -c receiptsPosted)"',
   'echo "activationBlock=$(printf %s "$S" | grep -c residentExecutable)"',
+  // agent-org is a SECOND plugin with its own version and its own bytes on disk. It is probed here
+  // in the same block (one round trip, one header) so the canary gate can judge an org release the
+  // same way it judges a room release. Absent org = empty fields, never a fabricated version: a
+  // missing measurement must be able to REFUSE downstream, not pass as "no change needed".
+  'O=$HOME/.dsh/profiles/web/node_modules/dsh-agent-org',
+  '[ -e "$O" ] || O=$HOME/.dsh/profiles/node_modules/dsh-agent-org',
+  'OI=$([ -d "$O/lib" ] && echo lib || ([ -d "$O/src" ] && echo src || echo none))',
+  'echo "orgHashDir=$OI"',
+  'echo "orgPlugin=$([ -f "$O/package.json" ] && grep -m1 version $O/package.json | cut -d: -f2 | tr -d " ,\\"")"',
+  'echo "orgLibHash=$([ "$OI" != none ] && cd $O && find $OI -type f | LC_ALL=C sort | xargs cat | md5 -q)"',
+  'OL=$([ "$OI" != none ] && find $O/$OI -type f | while read f; do stat -f %m "$f" 2>/dev/null || stat -c %Y "$f"; done | sort -n | tail -1)',
+  'echo "orgLibMtime=$OL"',
+  'OD=$([ -e "$O" ] && (stat -f %m "$O" 2>/dev/null || stat -c %Y "$O"))',
+  'echo "orgPkgDirMtime=$OD"',
 ].join("; ");
 
 /**
@@ -134,6 +148,26 @@ export const TEMPLATE_WINDOWS = [
   "'stateBytes='+$s.Length",
   "'ackBlock='+([regex]::Matches($s,'receiptsPosted')).Count",
   "'activationBlock='+([regex]::Matches($s,'residentExecutable')).Count",
+  // Same four fields as the POSIX template (see the note there): the org plugin's version, the hash
+  // of its lib bytes, and when those bytes landed -- empty when org is not installed.
+  "$O=\"$env:USERPROFILE\\.dsh\\profiles\\web\\node_modules\\dsh-agent-org\"",
+  "if(!(Test-Path $O)){$O=\"$env:USERPROFILE\\.dsh\\profiles\\node_modules\\dsh-agent-org\"}",
+  // agent-org ships src/ (lib/ is a gitignored build copy and is NOT in its files list), so the
+  // hash covers lib when a build has one and src otherwise -- and WHICH one is printed, because a
+  // hash whose subject is unnamed cannot be compared between machines.
+  "$od='none'",
+  "if(Test-Path \"$O\\lib\"){$od='lib'}elseif(Test-Path \"$O\\src\"){$od='src'}",
+  "'orgHashDir='+$od",
+  "'orgPlugin='+$(if(Test-Path \"$O\\package.json\"){(Get-Content \"$O\\package.json\" -Raw | ConvertFrom-Json).version}else{''})",
+  "$ofs=@()",
+  "if($od -ne 'none'){$ofs=@(Get-ChildItem \"$O\\$od\" -Recurse -File)}",
+  "$oh=''",
+  "if($ofs.Count -gt 0){$m=New-Object IO.MemoryStream;foreach($f in $ofs){$b=[IO.File]::ReadAllBytes($f.FullName);$m.Write($b,0,$b.Length)};$m.Position=0;$oh=(Get-FileHash -InputStream $m -Algorithm MD5).Hash.ToLower()}",
+  "'orgLibHash='+$oh",
+  "$ol=''",
+  "if($ofs.Count -gt 0){$ol=[int]([DateTimeOffset]::new(($ofs|Sort-Object LastWriteTimeUtc|Select-Object -Last 1).LastWriteTimeUtc).ToUnixTimeSeconds())}",
+  "'orgLibMtime='+$ol",
+  "'orgPkgDirMtime='+$(if(Test-Path $O){[int]([DateTimeOffset]::new((Get-Item $O).LastWriteTimeUtc).ToUnixTimeSeconds())}else{''})",
 ].join("; ");
 
 /**
@@ -213,6 +247,19 @@ export function deriveFacts(fields, { id, address = null, via }) {
   const etimeSec = parseEtime(fields.etimeSec ?? fields.etime);
   const hostStart = Number.isFinite(etimeSec) && Number.isFinite(now) ? now - etimeSec : null;
   const loadedAfterDisk = hostStart !== null && Number.isFinite(installMtime) ? hostStart >= installMtime : null;
+  // The org plugin's half of the row, derived by the same rules (D-42 included: file mtimes are
+  // npm-normalised, so "when the bytes landed" is the max of package-dir mtime and newest lib mtime).
+  // orgVersion is intentionally null -- not "" and not the room version -- when org is absent.
+  const orgVersion = fields.orgPlugin && String(fields.orgPlugin).trim() !== "" ? String(fields.orgPlugin).trim() : null;
+  const orgLibHash = fields.orgLibHash && String(fields.orgLibHash).trim() !== "" ? String(fields.orgLibHash).trim() : null;
+  const orgLibMtimeRaw = fields.orgLibMtime === undefined || String(fields.orgLibMtime).trim() === "" ? null : Number(fields.orgLibMtime);
+  const orgLibMtime = Number.isFinite(orgLibMtimeRaw) ? orgLibMtimeRaw : null;
+  const orgPkgDirMtimeRaw = fields.orgPkgDirMtime === undefined || String(fields.orgPkgDirMtime).trim() === "" ? null : Number(fields.orgPkgDirMtime);
+  const orgPkgDirMtime = Number.isFinite(orgPkgDirMtimeRaw) ? orgPkgDirMtimeRaw : null;
+  const orgInstallMtime = orgVersion === null && orgLibMtime === null
+    ? null
+    : (orgPkgDirMtime !== null ? Math.max(orgLibMtime ?? 0, orgPkgDirMtime) : orgLibMtime);
+  const orgLoadedAfterDisk = hostStart !== null && Number.isFinite(orgInstallMtime) ? hostStart >= orgInstallMtime : null;
   return {
     id,
     address,
@@ -234,6 +281,13 @@ export function deriveFacts(fields, { id, address = null, via }) {
     shape: { ack: Number(fields.ackBlock ?? 0) >= 1, activation: Number(fields.activationBlock ?? 0) >= 1 },
     stateOk: fields.stateBytes === undefined ? null : Number(fields.stateBytes) > 0,
     stateBytes: fields.stateBytes === undefined ? null : Number(fields.stateBytes),
+    orgVersion,
+    orgLibHash,
+    orgHashDir: fields.orgHashDir && String(fields.orgHashDir).trim() !== "" ? String(fields.orgHashDir).trim() : null,
+    orgLibMtime,
+    orgPkgDirMtime,
+    orgInstallMtime,
+    orgLoadedAfterDisk,
   };
 }
 
