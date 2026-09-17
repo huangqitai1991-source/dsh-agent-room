@@ -14,3 +14,7 @@ test/.machine-facts-fixtures/
 test/.profile-guard-fixtures/
 # the publish-studio-files suite writes throwaway script fixtures here
 test/.publish-studio-fixtures/
+# scratch trees left by gated-release rehearsal (an evidence file, an older build kept for a
+# hand-comparison); per-run artefacts, never a source file
+test/.evidence-*/
+test/.oldbuild-*/

@@ -33,6 +33,15 @@
  *   it is why this command exists and why it is the documented path. Unsupported artifacts carry no
  *   evidence, no acceptance, no canary result and no ledger row.
  *
+ * PROMOTION: --candidate <tgz> -- publishing the bytes a gate already saw
+ *   A candidate is packed, uploaded to a shelf, installed on a canary and probed. The copy that ships
+ *   must be THE SAME BYTES -- but "re-pack the same tree and hope npm is deterministic" is not that
+ *   claim, it is a coincidence that holds until it does not, and both tarballs would carry the same
+ *   version number while differing in content. With --candidate NO pack happens: the file you name
+ *   must match the ledger's {gate:"candidate"} row for the version in md5 AND byte count, or the run
+ *   refuses and nothing is uploaded. So "the published artifact is the canaried artifact" stops being
+ *   a coincidence and becomes a precondition of publishing.
+ *
  * WHAT THIS COMMAND NEVER DOES
  *   It never installs, stops or restarts anything -- publishing is not installing. Installing is the
  *   upgrade launcher's job, and its pre-flight runs the same four gates. The launcher's read-only
@@ -79,7 +88,10 @@ const USAGE = [
   "  --max <n> --override --reason <why>    version-count quota controls (reason is recorded)",
   "",
   "publishing:",
-  "  --pack-root <dir>   the tree to pack (default: this repository)",
+  "  --candidate <tgz>   PROMOTE these exact bytes instead of packing: they must match the ledger's",
+  "                      {gate:\"candidate\"} row for --version (md5 AND bytes) or the run refuses.",
+  "                      No `npm pack` happens, so published == canaried by construction.",
+  "  --pack-root <dir>   the tree to pack (default: this repository; ignored with --candidate)",
   "  --pack-dir <dir>    where the .tgz is written (default: this repository)",
   "  --cache <dir>       npm's cache dir (only needed when npm's default cache is not writable,",
   "                      e.g. inside a confined sandbox); DSH_RELEASE_NPM_CACHE also works",
@@ -128,6 +140,45 @@ function runCommand(cmd, args, { cwd = null, env = process.env, timeoutMs = 6000
 function md5Of(file) {
   const buf = readFileSync(file);
   return { md5: createHash("md5").update(buf).digest("hex"), bytes: buf.length };
+}
+
+/**
+ * THE PROMOTION DECISION, pure: may THESE bytes become the published artifact of THIS version?
+ *
+ * Inputs are only what a caller can observe -- the file's own md5/byte count, the ledger's staged
+ * candidate row, and whether the artifact path is already occupied. Nothing here packs, uploads or
+ * writes, so the four ways to get it wrong are decidable in a test rather than by a nervous human
+ * comparing two md5s by eye at 03:00.
+ *
+ * The refusals are separate on purpose: "no candidate row" (a promotion with nothing staged) and
+ * "these are not those bytes" (the bytes drifted) are different failures with different fixes, and a
+ * single "refused" would hide which one happened.
+ */
+export function promoteDecision({ candPath, cand, staged, version, ledger, artifact, artifactExists }) {
+  if (!staged) {
+    return { ok: false, code: EXIT_REFUSED,
+      line: `the ledger ${ledger} has no {gate:"candidate"} row for ${version}: a promotion must publish bytes a gate run already staged -- re-packing is exactly what --candidate exists to prevent` };
+  }
+  if (String(staged.md5 ?? "") !== cand.md5 || Number(staged.bytes) !== cand.bytes) {
+    return { ok: false, code: EXIT_REFUSED,
+      line: `${candPath} is md5 ${cand.md5} / ${cand.bytes} bytes, but the ledger's candidate row for ${version} is md5 ${staged.md5 ?? "(none)"} / ${staged.bytes ?? "(none)"} bytes: these are NOT the bytes any gate was run on` };
+  }
+  const samePath = candPath === artifact;
+  if (artifactExists && !samePath) {
+    return { ok: false, code: EXIT_REFUSED,
+      line: `${artifact} already exists and is not the candidate: publishing over it would ship bytes no gate run saw (move it aside, or pass --candidate ${artifact})` };
+  }
+  return { ok: true, samePath, copy: !samePath,
+    note: samePath ? "the candidate already sits at the published path" : `copied to ${artifact} without repacking` };
+}
+
+/**
+ * WHICH staged row is authoritative: the LAST {gate:"candidate"} row for THIS version. A candidate
+ * that was staged twice (say, re-packed after a fix) must promote the bytes of the newest staging --
+ * an "any matching row" rule would let a stale row bless bytes nobody re-ran anything on.
+ */
+export function stagedCandidateRow(events, version) {
+  return (events ?? []).filter((e) => e && e.gate === "candidate" && e.version === version).slice(-1)[0] ?? null;
 }
 
 function defaultActor() {
@@ -248,9 +299,10 @@ async function main() {
   }
 
   /* ---- guards that only make sense once the gates allow: never ship over a shipped file ---- */
-  if (existsSync(artifact)) {
+  const candidateArg = args.candidate ? resolve(args.candidate) : null;
+  if (existsSync(artifact) && candidateArg !== artifact) {
     return refuse(EXIT_REFUSED,
-      `${artifact} already exists: republishing over it would ship bytes no gate run saw (move it aside, or publish a new version)`);
+      `${artifact} already exists: republishing over it would ship bytes no gate run saw (move it aside, pass --candidate ${artifact} to promote exactly those bytes, or publish a new version)`);
   }
   const known = readLedger(ledger);
   if (known.events.some((e) => e.gate === "publish" && e.version === version)) {
@@ -270,7 +322,26 @@ async function main() {
   }
   const remoteDir = kind === "scp" ? String(args.remote ?? DEFAULT_REMOTE) : transportSpec.slice("local:".length);
 
-  /* ---- 3. PACK (only now) ---- */
+  /* ---- 3. PACK -- or PROMOTE the staged bytes, never both (only now) ---- */
+  let local;
+  let promoted = null;
+  if (candidateArg) {
+    // A promotion never packs: the crate is skipped entirely, so the published bytes and the canaried
+    // bytes cannot drift apart. The only thing checked here is that a gate run really saw these bytes.
+    if (!existsSync(candidateArg)) return refuse(EXIT_ERROR, `--candidate ${candidateArg} does not exist: there are no bytes to promote`);
+    const cand = md5Of(candidateArg);
+    const staged = stagedCandidateRow(known.events, version);
+    const verdict = promoteDecision({ candPath: candidateArg, cand, staged, version, ledger, artifact, artifactExists: existsSync(artifact) });
+    if (!verdict.ok) return refuse(verdict.code, verdict.line);
+    if (verdict.copy) copyFileSync(candidateArg, artifact);
+    local = md5Of(artifact);
+    if (local.md5 !== cand.md5 || local.bytes !== cand.bytes) {
+      if (verdict.copy) rmSync(artifact, { force: true });
+      return finishedError(`the artifact at ${artifact} reads ${local.md5} / ${local.bytes} bytes but the candidate is ${cand.md5} / ${cand.bytes}: the published file is not the candidate, so nothing was uploaded`);
+    }
+    promoted = { md5: cand.md5, bytes: cand.bytes, path: candidateArg, commit: staged.commit ?? null };
+    process.stdout.write(`PROMOTED ${artifactName}  ${local.bytes} bytes  md5 ${local.md5}  (no repack; ${verdict.note})\n`);
+  } else {
   const npm = npmCli();
   if (!npm) return refuse(EXIT_ERROR, "cannot find npm's own entry point (node_modules/npm/bin/npm-cli.js); set DSH_RELEASE_NPM to point at it");
   const npmCache = args.cache ?? process.env.DSH_RELEASE_NPM_CACHE ?? null;
@@ -283,8 +354,9 @@ async function main() {
     return refuse(EXIT_ERROR,
       `npm pack did not produce ${artifactName} (exit ${pack.status}${pack.error ? `, ${pack.error}` : ""}): ${npmErrorBrief(pack.output)}`);
   }
-  const local = md5Of(artifact);
+  local = md5Of(artifact);
   process.stdout.write(`PACKED   ${artifactName}  ${local.bytes} bytes  md5 ${local.md5}\n`);
+  }
 
   const inner = innerVersion(artifact);
   if (inner.version && inner.version !== version) {
@@ -352,7 +424,10 @@ async function main() {
     bytes: local.bytes,
     url,
     upload: uploaded.where,
-    reason: `the four gates (version-count / evidence / acceptance / canary) allowed ${version}; packed, uploaded and md5-verified over HTTP by node tools/release.mjs`,
+    candidate: promoted,
+    reason: promoted
+      ? `the four gates (version-count / evidence / acceptance / canary) allowed ${version}; PROMOTED the candidate ${promoted.md5} the ledger staged (no repack: published bytes are the canaried bytes${promoted.commit ? `, candidate commit ${promoted.commit}` : ""}), uploaded and md5-verified over HTTP by node tools/release.mjs`
+      : `the four gates (version-count / evidence / acceptance / canary) allowed ${version}; packed, uploaded and md5-verified over HTTP by node tools/release.mjs`,
   };
   let sizeBefore = 0;
   try { sizeBefore = existsSync(ledger) ? statSync(ledger).size : 0; } catch { sizeBefore = 0; }
@@ -364,7 +439,8 @@ async function main() {
     return finishedError(`the artifact was uploaded but the publish row could not be written to ${ledger}: ${String(e.message ?? e)}`);
   }
 
-  process.stdout.write(`RECORDED {gate:"publish"} row in ${ledger} (artifact ${artifactName}, md5 ${local.md5})\n`);
+  process.stdout.write(`RECORDED {gate:"publish"} row in ${ledger} (artifact ${artifactName}, md5 ${local.md5}${promoted ? `, candidate ${promoted.md5}` : ""})\n`);
+  if (promoted) process.stdout.write(`PROMOTION PROVEN: ${artifactName} served at ${url} is byte-identical to the staged candidate ${promoted.md5} -- no pack step ran at all\n`);
   process.stdout.write(`RELEASE PUBLISHED: ${artifactName} md5 ${local.md5} - ${url}\n`);
   return EXIT_PUBLISHED;
 }
@@ -391,4 +467,10 @@ function finishedError(line) {
   return EXIT_ERROR;
 }
 
-process.exit(await main());
+// RUN as a command, IMPORT as a library. Without this guard the module body would execute a release
+// with whatever argv the importer happens to have -- so a test that merely reads the promotion rule
+// would run the four gates and try to publish something. The rule must be testable without firing it.
+if (process.argv[1] && resolve(fileURLToPath(import.meta.url)) === resolve(process.argv[1])) {
+  process.exit(await main());
+}
+export { main };
