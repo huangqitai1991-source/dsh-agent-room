@@ -39,6 +39,15 @@ export interface RoomServiceEvents {
   system: (roomId: string, event: SystemEvent) => void;
   members: (roomId: string, members: Member[]) => void;
   roomState: (roomId: string, status: Room["status"]) => void;
+  /**
+   * 0.1.53: the room-level RECORD changed — `controllerAgentId` or `settings`.
+   *
+   * These two fields previously had no carrier: `transferController` and
+   * `updateSettings` emitted only a text `system.event`, so a joined member's copy
+   * stayed frozen at join time (measured 2026-09-20). This event is what lets the
+   * host broadcast `room.state`; the member side applies it monotonically.
+   */
+  roomRecord: (roomId: string) => void;
   /** A member's admission rights were revoked; close their live sockets. */
   revoked: (roomId: string, agentId: string) => void;
 }
@@ -603,6 +612,9 @@ export class RoomService extends EventEmitter {
     if (patch.allowHumanTakeover !== undefined) s.allowHumanTakeover = patch.allowHumanTakeover;
     if (room.type === "persistent") await this.persistence.saveRoom(room);
     this.emit("system", roomId, { kind: "settings", text: "房间设置已更新", ts: nowIso() });
+    // 0.1.53: a text event is not a carrier. Without this the member's copy of
+    // authMode/autoMode/allowHumanTakeover stays frozen at join time forever.
+    this.emit("roomRecord", roomId);
     return room;
   }
 
@@ -613,6 +625,10 @@ export class RoomService extends EventEmitter {
     room.controllerAgentId = toAgentId;
     if (room.type === "persistent") await this.persistence.saveRoom(room);
     this.emit("system", roomId, { kind: "settings", text: `判定权已转移`, ts: nowIso(), by: toAgentId });
+    // 0.1.53: same reason — the member side had NO carrier for controllerAgentId,
+    // so "who judges this room" was wrong on every non-owner node (it caused a
+    // false "the handover never ran" conclusion on 2026-09-20).
+    this.emit("roomRecord", roomId);
     return room;
   }
 

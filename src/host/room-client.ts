@@ -18,7 +18,9 @@ import { EventEmitter } from "node:events";
 import { WebSocket } from "ws";
 import type { AgentIdentity, RoomSnapshot, ChatMessage, SystemEvent, Task, TaskHandoff, RoleKey, JoinedRoomRecord } from "../types.js";
 import type { ClientFrame, ServerFrame, TaskCreatePayload } from "./protocol.js";
+import type { RoomSettings } from "../types.js";
 import { isControlFrame, reconnectDelay, SYNC_VERSION } from "./protocol.js";
+import { decideRoomStateApply, describeApplyLatency, applyLatencyMs } from "./room-state.js";
 import {
   BACKFILL_FIRST_DELAY_MS,
   BACKFILL_POLL_MS,
@@ -56,6 +58,30 @@ export interface RoomSyncState extends BackfillDiagnostics {
   localLatestSeq: number;
   /** True when this node's channel to the owner is open right now. */
   connected: boolean;
+  /**
+   * 0.1.53 — the `room.state` half of this node's record, surfaced where a
+   * NON-AUTHOR can read it (`/agent-room-api/state` → `rooms[].sync.roomState`).
+   *
+   * Why it is not "just a log line": the acceptance criterion for the controller
+   * sync is a LATENCY (≤N s), and a reviewer that only has remote access cannot
+   * read this machine's console. A number in `/state` can be read from anywhere;
+   * a log line cannot. `latencyMs` is `null` when the frame carried no usable
+   * `hostTs` — never 0, because "unreadable" must not look like "instant".
+   */
+  roomState: {
+    /** Newest applied `room.state.roomRev` (0 = none applied yet). */
+    roomRev: number;
+    /** The last applied frame, or null before the first one. */
+    lastApply: {
+      at: number;
+      rev: number;
+      controllerAgentId: string;
+      /** null ⇒ the frame carried no usable `hostTs` (never reported as 0). */
+      latencyMs: number | null;
+      /** Set when the delta was negative (unsynchronised clocks), else null. */
+      clockSkew: string | null;
+    } | null;
+  };
 }
 
 export interface RoomClientOptions {
@@ -91,6 +117,14 @@ const OWNER_WATCH_MS = 30_000;
 
 /** One warning per key per minute: a dead channel must not flood the log. */
 const WARN_WINDOW_MS = 60_000;
+/**
+ * Burst bound for `room.state` APPLY lines (0.1.53). They are not time-windowed
+ * (a hidden 2nd apply would delete the very measurement the release is judged on),
+ * so the flood bound is a count instead: 20 lines per 5 s, then one summary line.
+ * 20 is far above any real controller chain (A→B→C is 3) and far below a flood.
+ */
+const ROOMSTATE_BURST_PER_WINDOW = 20;
+const ROOMSTATE_BURST_WINDOW_MS = 5_000;
 /**
  * How many optimistic local messages to keep while they await confirmation.
  *
@@ -162,6 +196,15 @@ export class RoomClient extends EventEmitter {
   /** Rate-limited sync log bookkeeping (one line a minute; requests always log). */
   private readonly syncLogAt = new Map<string, number>();
   /**
+   * 0.1.53: the last APPLIED `room.state`, mirrored into `/state` (see
+   * `RoomSyncState.roomState`). `latencyMs === null` means the frame carried no
+   * usable `hostTs` — the field exists so a remote reviewer can judge the ≤N s
+   * criterion without reading this machine's console.
+   */
+  private lastRoomStateApply: RoomSyncState["roomState"]["lastApply"] = null;
+  /** Burst guard for the (deliberately un-windowed) `roomstate` log lines. */
+  private readonly roomStateBurst = { windowStart: 0, logged: 0, suppressed: 0 };
+  /**
    * Optimistic local messages awaiting the owner's confirmed copy, oldest first.
    *
    * Keyed by localId; each entry is ALSO present in `snapshot.recentMessages`
@@ -173,6 +216,16 @@ export class RoomClient extends EventEmitter {
   private localSeq = 0;
   /** Convergence state for this room (0.1.35). */
   private readonly backfill = new BackfillState();
+  /**
+   * Newest applied `room.state.roomRev` (0.1.53).
+   *
+   * The room-level record (`controllerAgentId`, `settings`) had no carrier before
+   * this version, so a member's copy was frozen at join time. The host stamps each
+   * `room.state` frame with its own clock; a member applies only a STRICTLY LARGER
+   * value and rejects (with evidence) everything else — a replayed or reordered
+   * frame must never roll the record back.
+   */
+  private roomRev = 0;
   /** One-shot timer for the next sync attempt (never two at once). */
   private syncTimer: NodeJS.Timeout | null = null;
   /** Periodic `chat.stat` probe while the channel is open. */
@@ -703,6 +756,53 @@ export class RoomClient extends EventEmitter {
       case "members":
         if (this.snapshot) this.snapshot.room.members = frame.payload.members;
         break;
+      /**
+       * 0.1.53 — the room-level record (controllerAgentId + settings).
+       *
+       * Reached only through the socket this client holds for this room, so the
+       * "host-only" half of the contract is structural here; the frame carries no
+       * `senderAgentId`, which is exactly why the host half (never forward a
+       * member's inbound frame of this type) is what makes that meaningful.
+       * Monotonic by `roomRev`: a smaller or equal value is REJECTED and logged,
+       * never applied. The applied branch ALSO logs the measured `applyLatency`
+       * (member clock − payload `hostTs`), which is the card-01a0bcc4 requirement:
+       * the ≤N s criterion must be checkable from data, not from a stopwatch.
+       */
+      case "room.state": {
+        const payload = frame.payload;
+        if (!this.snapshot) break;
+        const decision = decideRoomStateApply(this.roomRev, payload);
+        if (!decision.apply) {
+          this.logSync("warn", `REJECTED room.state ${payload?.roomRev} (held ${this.roomRev}) — ${decision.reason}`);
+          break;
+        }
+        this.roomRev = decision.rev;
+        this.snapshot.room.controllerAgentId = String(payload.controllerAgentId ?? "");
+        this.snapshot.room.members = (payload.members ?? this.snapshot.room.members) as typeof this.snapshot.room.members;
+        if (payload.settings) {
+          this.snapshot.room.settings = { ...this.snapshot.room.settings, ...(payload.settings as Partial<RoomSettings>) };
+        }
+        {
+          // ONE measurement, two consumers: the log line and `/state`. Kept in a
+          // single expression so the number a reviewer reads and the number the
+          // operator greps can never disagree.
+          const now = Date.now();
+          const latencyMs = applyLatencyMs((payload as { hostTs?: unknown })?.hostTs, now);
+          this.lastRoomStateApply = {
+            at: now,
+            rev: decision.rev,
+            controllerAgentId: String(payload.controllerAgentId ?? ""),
+            latencyMs,
+            clockSkew: latencyMs !== null && latencyMs < 0 ? `receiver clock is ${-latencyMs}ms behind the host's` : null,
+          };
+          // NOT rate-limited on the shared `sync` key: a 5 s window hid the 2nd and
+          // 3rd apply of an A→B→C controller chain, which is exactly the case the
+          // acceptance counterexamples measure. Applies are host-triggered room
+          // operations (transfer/settings), not traffic.
+          this.logSync("roomstate", `applied ${decision.reason} controller=${String(payload.controllerAgentId ?? "").slice(0, 8)} ${describeApplyLatency((payload as { hostTs?: unknown })?.hostTs, now)}`);
+        }
+        break;
+      }
       case "system.event":
         this.emit("system", frame.payload);
         break;
@@ -834,6 +934,7 @@ export class RoomClient extends EventEmitter {
       ...this.backfill.diagnostics(localSeqs),
       localLatestSeq: localSeqMax(localSeqs),
       connected: this.connected,
+      roomState: { roomRev: this.roomRev, lastApply: this.lastRoomStateApply },
     };
   }
 
@@ -983,9 +1084,39 @@ export class RoomClient extends EventEmitter {
    * requests and their results are logged per batch with a short (5s) window —
    * enough to show what a catch-up did, far too little to flood a log. Warnings
    * keep the standard one-per-minute window.
+   *
+   * 0.1.53 adds the `roomstate` key with **no window at all**, and that is
+   * deliberate: an applied `room.state` IS a measurement (its `applyLatency`), and
+   * a 5 s window hid the 2nd and 3rd apply of a controller chain A→B→C — the exact
+   * shape the acceptance counterexamples exercise. The rate is bounded by the
+   * event, not by traffic: the host emits this frame only on transfer/settings.
+   * The flood bound is the burst guard below (BURST_PER_WINDOW, then one summary
+   * line per window), so a host stuck in a loop cannot fill the disk.
    */
-  private logSync(key: "sync" | "warn", message: string): void {
+  private logSync(key: "sync" | "warn" | "roomstate", message: string): void {
     const now = Date.now();
+    if (key === "roomstate") {
+      const state = this.roomStateBurst;
+      if (now - state.windowStart >= ROOMSTATE_BURST_WINDOW_MS) {
+        state.windowStart = now;
+        state.logged = 0;
+        state.suppressed = 0;
+      }
+      if (state.logged < ROOMSTATE_BURST_PER_WINDOW) {
+        state.logged += 1;
+        console.warn(`[agent-room] room ${this.label}: ${message}`);
+        return;
+      }
+      state.suppressed += 1;
+      if (state.suppressed === 1) {
+        console.warn(
+          `[agent-room] room ${this.label}: room.state apply logs suppressed after ${ROOMSTATE_BURST_PER_WINDOW} ` +
+            `in ${ROOMSTATE_BURST_WINDOW_MS}ms — the host is emitting this frame far faster than a transfer/settings ` +
+            `change can happen; /state still carries the LAST apply (sync.roomState.lastApply)`,
+        );
+      }
+      return;
+    }
     const last = this.syncLogAt.get(key) ?? 0;
     const windowMs = key === "warn" ? WARN_WINDOW_MS : 5_000;
     if (now - last < windowMs) return;

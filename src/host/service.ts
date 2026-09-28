@@ -4007,8 +4007,9 @@ function buildActivatePrompt(input: {
   lines.push(`你在房间「${input.title}」（roomId: ${input.roomId}）中被手动激活聊天，请基于房间上下文自然回复一条相关内容。`);
   lines.push(`你的身份：${input.identity.nickname}（agentId: ${input.identity.agentId}，角色: ${input.role}，能力: ${input.identity.capabilities.join("、") || "无"}）。`);
   if (input.tasks.length > 0) {
-    lines.push(`当前任务（${input.tasks.length} 个）：`);
-    for (const t of input.tasks.slice(0, 10)) {
+    const tasksShown = input.tasks.slice(0, 10);
+    lines.push(`当前任务（共 ${input.tasks.length} 个，此处显示 ${tasksShown.length} 个）：`);
+    for (const t of tasksShown) {
       const assignee = t.assignee ? `（负责人: ${t.assignee}）` : "";
       const acceptance = t.acceptance ? ` 验收: ${t.acceptance}` : "";
       lines.push(`- [${t.status}] ${t.title}${assignee}${acceptance}`);
@@ -4017,8 +4018,9 @@ function buildActivatePrompt(input: {
     lines.push("当前房间没有任务。");
   }
   if (input.recent.length > 0) {
-    lines.push(`最近消息（3 条）：`);
-    for (const m of input.recent.slice(0, 3)) {
+    const recentShown = input.recent.slice(0, 3);
+    lines.push(`最近消息（共 ${input.recent.length} 条，此处显示 ${recentShown.length} 条）：`);
+    for (const m of recentShown) {
       const human = m.human ? " [人类]" : "";
       const mention = m.mentions && m.mentions.length > 0 ? ` @[${m.mentions.join(",")}]` : "";
       lines.push(`- ${m.fromNickname}${human}: ${m.text}${mention}`);
@@ -4040,7 +4042,8 @@ function buildActivatePrompt(input: {
  * cheap-judge + executor combined; a separate small-model judge is a v2 option
  * if the real token burn ever gets high.
  */
-function buildListenPrompt(input: {
+/** Exported so the truncation self-report can be unit-tested directly (F4 regression guard). */
+export function buildListenPrompt(input: {
   roomId: string;
   title: string;
   identity: AgentIdentity;
@@ -4056,12 +4059,26 @@ function buildListenPrompt(input: {
   const kind = wakeKindLabel(listenAuthorKind(m, input.identity.agentId));
   const lines: string[] = [];
   lines.push(`你在房间「${input.title}」（roomId: ${input.roomId}）的监听中收到一条需要关注的消息（${kind}）。`);
-  lines.push(`消息：${m.fromNickname} 说：「${m.text.slice(0, 500)}」`);
+  // F4 (2026-09-20): NEVER truncate without saying so. A truncated preview that looks
+  // complete is how an agent answers half a sentence and then has to be corrected — the
+  // measured cost is a whole extra turn per occurrence (小黄 hit it 4 times on 2026-09-17;
+  // her own 665-char conclusion was cut in the tail she could not see). Every cut therefore
+  // carries: the full length, the seq, and the one-line command that fetches the whole text.
+  const MAIN_CAP = 500;
+  const mainCut = m.text.length > MAIN_CAP;
+  lines.push(`消息（seq=${m.seq}${mainCut ? `，全文 ${m.text.length} 字，此处截断到 ${MAIN_CAP}` : ""}）：${m.fromNickname} 说：「${mainCut ? m.text.slice(0, MAIN_CAP) : m.text}」`);
+  if (mainCut) {
+    lines.push(`（上面是**截断**预览、不是全文；取全文：GET http://127.0.0.1:3080/agent-room-api/rooms/${input.roomId}/messages 后按 seq=${m.seq} 取该条）`);
+  }
   lines.push(`你的身份：${input.identity.nickname}（agentId: ${input.identity.agentId}）。`);
   const ctx = input.recent.slice(-6);
   if (ctx.length > 0) {
-    lines.push("最近对话（上下文）：");
-    for (const r of ctx) lines.push(`- ${r.fromNickname}${r.human ? " [人类]" : ""}: ${r.text.slice(0, 120)}`);
+    lines.push(`最近对话（上下文，共 ${input.recent.length} 条，此处显示最后 ${ctx.length} 条）：`);
+    for (const r of ctx) {
+      const CTX_CAP = 120;
+      const rCut = r.text.length > CTX_CAP;
+      lines.push(`- ${r.fromNickname}${r.human ? " [人类]" : ""}: ${rCut ? r.text.slice(0, CTX_CAP) : r.text}${rCut ? ` …（截断，全文 ${r.text.length} 字，seq=${r.seq}）` : ""}`);
+    }
   }
   lines.push("请判断这条消息是否需要你回应或处理：");
   lines.push("- 需要：用 room_send 工具自然、简短地回复；如果是要办事（比如统计、查数据、建任务），先回复认领再动手。");

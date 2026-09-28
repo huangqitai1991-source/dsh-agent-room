@@ -129,6 +129,38 @@ export type ServerFrame =
   | { type: "task.removed"; payload: { taskId: string } }
   | { type: "members"; payload: { members: Member[] } }
   | { type: "system.event"; payload: SystemEvent }
+  /**
+   * ROOM-LEVEL RECORD (0.1.53). The fields that had **no carrier at all** before:
+   * `transferController` and `updateSettings` only emitted a text `system.event`,
+   * so a member's view of `controllerAgentId` / `settings` was frozen at join time
+   * forever (measured 2026-09-20: two independent member nodes still showed the
+   * OLD controller hours after a transfer, while the same snapshot showed the new
+   * `roles` — the roster half of that push did travel).
+   *
+   * Two-sided contract (do not weaken either half):
+   *  · HOST side — this frame is produced ONLY by the host's own service events on
+   *    the broadcast surface, and a member's inbound frame of this type is never
+   *    forwarded. The host relays member frames (peer-server "Forward service
+   *    events to member sockets"; web.js "The host forwards owned-room
+   *    operations…"), so "arrived over the host connection" does NOT mean "the
+   *    host wrote it".
+   *  · MEMBER side — apply only on this socket, only when `roomRev` ADVANCES
+   *    (monotonic), and log a rejection otherwise. `senderAgentId` does not exist
+   *    on member-side frames, so the frame alone cannot be authenticated.
+   *
+   * `settings` deliberately carries NO `passwordHash` (the hash never leaves the host).
+   */
+  | {
+      type: "room.state";
+      payload: {
+        roomId: string;
+        /** Host clock (ms epoch); the member applies only a strictly larger value. */
+        roomRev: number;
+        controllerAgentId: string;
+        settings: { authMode: string; autoMode?: boolean; maxMembers?: number; allowHumanTakeover?: boolean };
+        members: Member[];
+      };
+    }
   | { type: "ack"; payload: { seq: number; ok: boolean; error?: string } }
   | { type: "error"; payload: { message: string } }
   /**

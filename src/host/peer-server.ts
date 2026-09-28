@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
 import type { AgentIdentity, ChatMessage, RoomSnapshot } from "../types.js";
+import { buildRoomStatePayload } from "./room-state.js";
 import type { RoomService } from "./room-service.js";
 import {
   type ClientFrame,
@@ -183,6 +184,22 @@ export class PeerServer {
     this.service.on("members", (roomId) => {
       const room = this.service.getOwnedRoom(roomId);
       if (room) this.broadcast(roomId, { type: "members", payload: { members: room.members } });
+    });
+    /**
+     * 0.1.53 — the room-level record reaches members at last.
+     *
+     * `controllerAgentId` and `settings` had NO carrier before: their mutators only
+     * emitted a text `system.event`, so members' copies stayed frozen at join time
+     * (measured 2026-09-20: two member nodes still showed the old controller hours
+     * after a transfer). The frame is produced HERE, from the host's own service
+     * event — never forwarded from a member's inbound frame (see the type contract
+     * in protocol.ts; the host relays member frames, so "arrived over the host
+     * connection" is not proof of authorship).
+     */
+    this.service.on("roomRecord", (roomId) => {
+      const room = this.service.getOwnedRoom(roomId);
+      if (!room) return;
+      this.broadcast(roomId, { type: "room.state", payload: buildRoomStatePayload(roomId, room) });
     });
     // Revocation closes the member's live sockets immediately.
     this.service.on("revoked", (roomId, agentId) => {
@@ -590,6 +607,27 @@ export class PeerServer {
     const identity = this.memberIdentity(roomId, agentId);
     if (!identity) {
       respond(frameError("not-member"));
+      return;
+    }
+    /**
+     * 0.1.53 CONTRACT — HOST HALF.
+     *
+     * `room.state` is a host-only frame type. This method is the single funnel for
+     * every member-originated frame (direct socket at `handleFrame`, relay bridge at
+     * `connectRelay`), so a member that SENDS this type — e.g. a forged
+     * `controllerAgentId` or `settings` — is dropped here: never applied, never
+     * forwarded. Without this guard, re-broadcasting a member's frame of this type
+     * would be a one-message privilege escalation (the same fail-open shape as the
+     * org plane's "self-declared authority", F2).
+     *
+     * The type is not part of ClientFrame on purpose; the comparison is by wire
+     * string so an unexpected value still cannot pass.
+     */
+    if (String((frame as { type?: unknown }).type) === "room.state") {
+      console.error(
+        `[agent-room] dropped a member-supplied room.state from ${agentId} in room ${roomId} (host-only frame type)`,
+      );
+      respond(frameError("forbidden-frame-type"));
       return;
     }
     // D-20: this method is the ONE funnel every member-originated frame goes
