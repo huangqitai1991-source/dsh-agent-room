@@ -21,6 +21,7 @@ function makePlane({ send, waitTimeoutMs = 5000 }) {
   return new ExecPlane({
     identityAgentId: async () => OWNER,
     roleOf: (agentId) => (agentId === OWNER ? "owner" : "member"),
+    canExec: (actor) => ({ allowed: actor === OWNER, role: actor === OWNER ? "owner" : "member", reason: "test stub (target-aware authz covered by exec-authz.test.mjs)" }),
     send,
     run: async () => ({ ok: true, code: 0, stdout: "", stderr: "", timedOut: false }),
     audit: () => {},

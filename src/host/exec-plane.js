@@ -53,6 +53,20 @@ export class ExecPlane {
   constructor(deps) {
     this.identityAgentId = deps.identityAgentId;
     this.roleOf = deps.roleOf;
+    /**
+     * 0.2.14: target-aware authorization. `(actorAgentId, targetAgentId) =>
+     * {allowed, role, reason}`. REQUIRED: when it is absent this plane denies
+     * every instruction (fail-closed) and says so in the log — the pre-0.2.14
+     * rule (`owner || lead`, blind to the target) let the lead of an empty
+     * department command every machine in the company.
+     */
+    this.canExec = deps.canExec ?? null;
+    /**
+     * 0.2.14: freshness probe for the LOCAL org tree — `() => {verdict, reason}`.
+     * Only POSITIVE evidence (`stale`, from the authority) blocks a command; an
+     * idle fleet reports `unknown` and must not be treated as a failure.
+     */
+    this.freshness = deps.freshness ?? null;
     this.send = deps.send;
     this.run = deps.run ?? runCommand;
     this.audit = deps.audit ?? (() => {});
@@ -97,8 +111,24 @@ export class ExecPlane {
     }
 
     const sender = message?.from ?? "";
-    const senderRole = this.roleOf(sender);
-    const allowed = senderRole === "owner" || senderRole === "lead";
+    // 0.2.14: authorization is decided against the TARGET, not just the sender's
+    // role. A `lead` may only reach inside a subtree it leads; `owner` is the
+    // single cross-department channel; anything undecidable denies.
+    const decision = this.canExec ? this.canExec(sender, instruction.targetAgentId) : null;
+    const senderRole = decision?.role ?? this.roleOf(sender);
+    let allowed = decision?.allowed === true;
+    let denyReason = decision?.reason ?? "authorization unavailable: canExec is not wired (fail-closed)";
+    if (!this.canExec) this.warn("authz-unwired", "[agent-org] exec: canExec dependency missing — denying every instruction (fail-closed)");
+    // 0.2.14: a stale LOCAL tree can hand out rights that a correct copy would not
+    // (measured: 小捷's copy still had 小婷 as a lead for 2 days). Only a positive
+    // `stale` verdict blocks; `unknown` is what an idle fleet reports.
+    if (allowed && this.freshness) {
+      const fresh = this.freshness();
+      if (fresh && fresh.verdict === "stale") {
+        allowed = false;
+        denyReason = `local org tree looks stale — ${fresh.reason}`;
+      }
+    }
 
     // IDEMPOTENCY. `executeOnce` claims the id SYNCHRONOUSLY before any await, so
     // two concurrent deliveries of the same id cannot both run the command.
@@ -108,7 +138,7 @@ export class ExecPlane {
     const outcome = await executeOnce(
       this.cache,
       instruction.id,
-      () => this.runInstruction(instruction.id, by, instruction.command, sender, senderRole, allowed),
+      () => this.runInstruction(instruction.id, by, instruction.command, sender, senderRole, allowed, denyReason),
       () => stillExecutingResult(instruction.id, by),
     );
     const reply = outcome.result;
@@ -161,7 +191,7 @@ export class ExecPlane {
    * @param {string} senderRole
    * @param {boolean} allowed
    */
-  async runInstruction(id, by, command, sender, senderRole, allowed) {
+  async runInstruction(id, by, command, sender, senderRole, allowed, denyReason = "") {
     if (!allowed) {
       // A refusal is cached like any other outcome: a replay must never turn
       // "rejected" into a different answer.
@@ -173,7 +203,7 @@ export class ExecPlane {
         stdout: "",
         stderr: "",
         timedOut: false,
-        error: `exec rejected: sender ${sender} role=${senderRole} (仅 owner/lead 可下发)`,
+        error: `exec rejected: sender ${sender} role=${senderRole} — ${denyReason}`,
       };
     }
     const outcome = await this.run(command, EXEC_TIMEOUT_MS);

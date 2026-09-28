@@ -27,6 +27,7 @@ function makePlane({ command = async () => ({ ok: true, code: 0, stdout: "done",
   const plane = new ExecPlane({
     identityAgentId: async () => TARGET,
     roleOf: (agentId) => (agentId === OWNER ? "owner" : "member"),
+    canExec: (actor) => ({ allowed: actor === OWNER, role: actor === OWNER ? "owner" : "member", reason: "test stub (target-aware authz covered by exec-authz.test.mjs)" }),
     send: async (text, meta) => {
       state.sent.push({ text, label: meta?.label });
       return { ok: true, attempts: 1, queued: false, unknown: false };
@@ -181,6 +182,7 @@ test("the controller reports an undeliverable instruction instead of waiting 45s
   const plane = new ExecPlane({
     identityAgentId: async () => TARGET,
     roleOf: () => "owner",
+    canExec: () => ({ allowed: true, role: "owner", reason: "test stub" }),
     // Every attempt fails: the channel is not open and nothing can be queued.
     send: async () => {
       state.sent += 1;

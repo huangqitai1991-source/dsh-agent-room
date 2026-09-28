@@ -7,7 +7,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { createSyncHealth, noteInbound, noteOutbound, reassertRequest, shouldReassert, syncHealthView } from "./sync-health.js";
+import { createSyncHealth, noteInbound, noteOutbound, reassertRequest, shouldReassert, syncHealthView, freshnessOf } from "./sync-health.js";
 import { Service } from "@deepseek-ai/cordis";
 import { OrgPersistence } from "./persistence.js";
 import { clearRefusedMarker, ensureBackupRoot, failLoud, isUuidShaped, nicknameProblem } from "./safety.js";
@@ -31,7 +31,7 @@ const WARN_WINDOW_MS = 60_000;
  */
 const LIVENESS_PERSIST_MS = 30_000;
 
-import { checkPermission, canRenameNode, roleFor } from "./permission.js";
+import { checkPermission, canRenameNode, roleFor, canExecTarget } from "./permission.js";
 import { AuditLog } from "./audit.js";
 import {
   buildTree,
@@ -112,6 +112,12 @@ export class OrgService extends Service {
     this.execPlane = new ExecPlane({
       identityAgentId: async () => (await this.agentRoom?.gateway?.identity?.())?.agentId ?? "",
       roleOf: (agentId) => this.roleOf(agentId),
+      // 0.2.14 horizontal isolation: the decision needs the TARGET, so it is
+      // computed from the live org tree on this machine (the same copy the
+      // receiver trusts). Fail-closed lives inside `canExecTarget`.
+      canExec: (actorAgentId, targetAgentId) => canExecTarget(this.state, actorAgentId, targetAgentId),
+      // 0.2.14: a stale local copy can grant rights a correct copy would refuse.
+      freshness: () => this.freshnessVerdict(),
       send: (text, meta) => this.sendControlFrame(text, meta),
       audit: (entry) => void this.audit.append(entry),
       warn: (key, message) => this.warnRateLimited(key, message),
@@ -178,7 +184,46 @@ export class OrgService extends Service {
 
   /** @returns {{roomId?: string}} */
   async getSyncConfig() {
-    return { roomId: this.config.syncRoomId || "", syncReady: this.syncReady === true, health: syncHealthView(this.syncHealth) };
+    return {
+      roomId: this.config.syncRoomId || "",
+      syncReady: this.syncReady === true,
+      health: syncHealthView(this.syncHealth),
+      // 0.2.14: the same verdict the exec plane consults, exposed as data so a
+      // monitor can tell "stale" (positive evidence, from the authority) from
+      // "unknown" (nothing announced — the normal state of a quiet fleet).
+      freshness: this.freshnessVerdict(),
+    };
+  }
+
+  /** The company node's leaderAgentId — the single authority (sync.js uses the same identity). */
+  companyAuthorityAgentId() {
+    return this.state?.nodes?.find((n) => n.kind === "company")?.leaderAgentId ?? "";
+  }
+
+  /** 0.2.14 freshness verdict for THIS machine's org tree copy. */
+  freshnessVerdict() {
+    return freshnessOf(this.syncHealth, this.state?.updatedAt ?? null, { authorityAgentId: this.companyAuthorityAgentId() });
+  }
+
+  /**
+   * Cached `localAgentId()` (0.2.14).
+   *
+   * The peer/non-peer split in `noteInbound` needs this machine's own agentId on
+   * EVERY inbound frame, and `localAgentId()` is async and may consult the room
+   * plugin. The value cannot change at runtime (a rename changes the nickname,
+   * not the agentId), so one successful read is cached; a failed read is NOT
+   * cached as a value — it simply returns "" (fail-closed: no peer bookkeeping
+   * rather than wrong bookkeeping).
+   */
+  async cachedSelfAgentId() {
+    if (typeof this._selfAgentId === "string") return this._selfAgentId;
+    try {
+      const id = (await this.localAgentId()) || "";
+      if (id) this._selfAgentId = id;
+      return id;
+    } catch {
+      return "";
+    }
   }
 
   /**
@@ -287,7 +332,15 @@ export class OrgService extends Service {
     if (!this.config.syncRoomId || roomId !== this.config.syncRoomId) return;
 
     // card-16: a frame that ARRIVED is the strongest proof the room is readable from here.
-    noteInbound(this.syncHealth, nowIso(), { from: message?.from });
+    // 0.2.14: keep the PEER view apart from "whoever wrote last" (our own frames are not
+    // peer evidence: measured 43/120 samples read as "self" on 小捷), and remember WHO
+    // announced the latest snapshot so freshness is judged against the AUTHORITY only.
+    const selfId = await this.cachedSelfAgentId();
+    const snapshotFrame = decodeSnapshot(text);
+    noteInbound(this.syncHealth, nowIso(), { from: message?.from }, {
+      selfAgentId: selfId,
+      snapshot: snapshotFrame ? { updatedAt: snapshotFrame.updatedAt, rev: snapshotFrame.rev } : null,
+    });
     // 0. LIVENESS (D-20, 0.2.13): this frame proves the sender's plugin is alive
     //    right now. Recorded before any branch, so a snapshot, an instruction or a
     //    result all count as contact — and a colleague who is merely OFF DUTY stops
@@ -319,7 +372,7 @@ export class OrgService extends Service {
     }
 
     // 3. org snapshot sync
-    const snapshot = decodeSnapshot(text);
+    const snapshot = snapshotFrame;
     if (!snapshot) return;
     const identity = await this.agentRoom?.gateway?.identity?.();
     if (!shouldApply(this.state, snapshot, identity?.agentId ?? "")) return;

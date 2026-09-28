@@ -28,10 +28,16 @@ export function childrenOf(state, parentId) {
 export function descendantNodes(state, nodeId) {
   const out = [];
   const stack = [nodeId];
+  // 0.2.14: `seen` prevents an infinite loop when a malformed tree (parentId
+  // cycle, reachable through org sync) is walked. Measured 2026-09-20: without
+  // it this function hangs on a cycle.
+  const seen = new Set([nodeId]);
   while (stack.length > 0) {
     const current = stack.pop();
     for (const node of state.nodes) {
       if (node.parentId === current) {
+        if (seen.has(node.id)) continue;
+        seen.add(node.id);
         out.push(node);
         stack.push(node.id);
       }

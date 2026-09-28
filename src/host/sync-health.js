@@ -30,6 +30,26 @@ export function createSyncHealth() {
     unverifiedAt: null,
     lastInboundAt: null,
     lastInboundFrom: null,
+    // 0.2.14: the PEER view, kept apart from "whoever wrote last".
+    // Measured 2026-09-20 on 小捷 over 120 snapshots: `lastInboundFrom` read as
+    // "self" in 43 of them (35.8%, longest run 32 samples ≈ 160 s), because it is
+    // last-writer-wins across every writer including this node. A single read of
+    // that field therefore cannot answer "did a peer just write" — these fields can.
+    lastPeerInboundAt: null,
+    lastPeerFrom: null,
+    // 0.2.14 (spec input from 小捷, measured): a SINGLE scalar still gets
+    // overwritten across peers — three writers touched its window (KEVINKIKI 29,
+    // itself 43, 小婷 48), so "小婷 wrote a second ago" would make the scalar read
+    // "fresh" for a peer that has been silent for hours. The map is the primary
+    // record; `lastPeerInboundAt`/`lastPeerFrom` are derived from it.
+    lastInboundByPeer: {},
+    lastPeerSnapshotAt: null,
+    lastPeerSnapshotRev: null,
+    // WHO announced that snapshot. Staleness evidence only counts when it comes
+    // from the AUTHORITY (the company node's leaderAgentId — the same identity
+    // `shouldApply` already treats as authoritative in sync.js). A lead or a
+    // stale peer announcing something older proves nothing about our copy.
+    lastPeerSnapshotFrom: null,
     lastErrorAt: null,
     lastErrorReason: null,
   };
@@ -67,9 +87,67 @@ export function noteOutbound(h, outcome = {}, at) {
 }
 
 /** Record a frame that actually arrived here. @param {string} at @param {{from?: string}} message */
-export function noteInbound(h, at, message = {}) {
+export function noteInbound(h, at, message = {}, opts = {}) {
   h.lastInboundAt = at;
   h.lastInboundFrom = message.from ?? h.lastInboundFrom ?? null;
+  // 0.2.14: only a frame from SOMEONE ELSE is peer evidence. `opts.selfAgentId`
+  // must be supplied for that judgement; without it we record the raw frame and
+  // leave the peer fields alone (never guess).
+  const self = opts.selfAgentId ?? null;
+  const from = message.from ?? null;
+  if (!from || !self || from === self) return;
+  h.lastInboundByPeer = { ...(h.lastInboundByPeer ?? {}), [from]: at };
+  const stamps = Object.values(h.lastInboundByPeer).filter(Boolean).map(String).sort();
+  h.lastPeerInboundAt = stamps.length > 0 ? stamps[stamps.length - 1] : null;
+  h.lastPeerFrom = Object.entries(h.lastInboundByPeer)
+    .filter(([, ts]) => String(ts) === String(h.lastPeerInboundAt))
+    .map(([agentId]) => agentId)[0] ?? from;
+  const snap = opts.snapshot ?? null;
+  if (snap) {
+    if (snap.updatedAt) h.lastPeerSnapshotAt = snap.updatedAt;
+    if (snap.rev !== undefined && snap.rev !== null) h.lastPeerSnapshotRev = snap.rev;
+    h.lastPeerSnapshotFrom = from;
+  }
+}
+
+/**
+ * 0.2.14 — is the LOCAL org tree older than what the AUTHORITY has announced?
+ *
+ * POSITIVE EVIDENCE ONLY, and only from the authority. Quiet is normal, not
+ * broken: measured on this fleet 2026-09-20, the gap between org frames reached
+ * 2.5 days and 小捷's own tree sat frozen for 2 days with nothing wrong — so
+ * "no peer frame for N minutes" must NOT be read as staleness. This returns:
+ *   stale   — the AUTHORITY announced a snapshot NEWER than the local tree;
+ *   fresh   — the authority announced one the local tree already covers;
+ *   unknown — no announcement from the authority yet (the honest answer), which
+ *             includes the case where only a NON-authority peer announced.
+ *
+ * The authority is the company node's `leaderAgentId` — the same identity
+ * `shouldApply` (sync.js) uses, so freshness and convergence cannot disagree
+ * about who is allowed to overwrite whom.
+ *
+ * @param {ReturnType<typeof createSyncHealth>} h
+ * @param {string|null} localUpdatedAt the local tree's `updatedAt`
+ * @param {{authorityAgentId?: string|null}} [opts]
+ */
+export function freshnessOf(h, localUpdatedAt, opts = {}) {
+  const peerSnapshotAt = h?.lastPeerSnapshotAt ?? null;
+  const peerFrom = h?.lastPeerSnapshotFrom ?? null;
+  const authority = (opts.authorityAgentId ?? "").trim();
+  const local = localUpdatedAt ?? null;
+  const evidence = {
+    peerSnapshotAt,
+    peerFrom,
+    localUpdatedAt: local,
+    authorityAgentId: authority || null,
+    peerIsAuthority: Boolean(authority) && peerFrom === authority,
+    peerInboundAt: h?.lastPeerInboundAt ?? null,
+  };
+  if (!peerSnapshotAt || !local) return { verdict: "unknown", reason: "no peer snapshot seen yet", evidence };
+  if (!authority) return { verdict: "unknown", reason: "no authority in the local tree (company leader empty)", evidence };
+  if (peerFrom !== authority) return { verdict: "unknown", reason: "the announcement came from a non-authority peer", evidence };
+  if (String(peerSnapshotAt) > String(local)) return { verdict: "stale", reason: "authority announced a newer tree", evidence };
+  return { verdict: "fresh", reason: "authority snapshot is not newer than the local tree", evidence };
 }
 
 /** @returns {boolean} true when the newest bad evidence is newer than the newest good evidence */
@@ -90,6 +168,15 @@ export function syncHealthView(h) {
     unverifiedAt: h.unverifiedAt,
     lastInboundAt: h.lastInboundAt,
     lastInboundFrom: h.lastInboundFrom,
+    // 0.2.14: the peer-only view (see createSyncHealth for why lastInboundFrom alone is not enough)
+    lastPeerInboundAt: h.lastPeerInboundAt,
+    lastPeerFrom: h.lastPeerFrom,
+    // per-peer view: lets a monitor judge "is THIS colleague reachable" without
+    // continuous sampling (0.2.14 spec input from 小捷)
+    lastInboundByPeer: { ...(h.lastInboundByPeer ?? {}) },
+    lastPeerSnapshotAt: h.lastPeerSnapshotAt,
+    lastPeerSnapshotRev: h.lastPeerSnapshotRev,
+    lastPeerSnapshotFrom: h.lastPeerSnapshotFrom,
     lastErrorAt: h.lastErrorAt,
     lastErrorReason: h.lastErrorReason,
     degraded: isSyncDegraded(h),

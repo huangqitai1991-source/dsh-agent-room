@@ -74,8 +74,14 @@ export function superiorOf(state, agentId) {
   const memberNode = state.nodes.find((n) => n.kind === "member" && n.agentId === agentId);
   if (!memberNode) return null;
   // Walk up from the member's parent until we find a unit with a leader.
+  // 0.2.14: `seen` makes the walk cycle-safe. Before this, one malformed tree
+  // (a parentId loop arriving through sync) hung this loop — and this function
+  // sits on the authorization path (`checkPermission` -> L2 approver lookup).
   let parentId = memberNode.parentId;
+  const seen = new Set();
   while (parentId) {
+    if (seen.has(parentId)) break;
+    seen.add(parentId);
     const unit = state.nodes.find((n) => n.id === parentId);
     if (!unit) break;
     if (unit.leaderAgentId && unit.leaderAgentId !== agentId) return { agentId: unit.leaderAgentId, node: unit };
@@ -155,4 +161,109 @@ export function renameActionFor(actorAgentId, node) {
 export function canRenameNode(state, actorAgentId, node) {
   const action = renameActionFor(actorAgentId, node);
   return { action, ...checkPermission(state, actorAgentId ?? "", action) };
+}
+
+/* ------------------------------------------------------------------ *
+ * 0.2.14 — HORIZONTAL ISOLATION for the exec plane.
+ *
+ * Before 0.2.14 `exec-plane.js` allowed a sender when `roleFor()` said
+ * "owner" OR "lead" — and `roleFor` only asks "do you lead SOME unit",
+ * never "does the target live under a unit you lead". So the lead of an
+ * empty department could push commands to every machine in the company.
+ * The two functions below are the missing half of that rule.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Cycle-safe descendant unit ids of `rootId` (the root itself is not included).
+ *
+ * Every traversal here must survive a malformed tree: `parentId` loops can
+ * arrive through org sync (`OrgService` replaces the whole node array, and the
+ * loader only checks that `nodes` is an array). A loop that reaches an auth
+ * path is worse than a wrong answer — it hangs instead of answering 403.
+ *
+ * @param {{nodes: Array}} state
+ * @param {string} rootId
+ * @returns {string[]}
+ */
+export function subtreeUnitIds(state, rootId) {
+  const seen = new Set([rootId]);
+  const queue = [rootId];
+  const out = [];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    for (const node of state.nodes) {
+      if (node.parentId !== current) continue;
+      if (seen.has(node.id)) continue; // cycle / diamond guard
+      seen.add(node.id);
+      out.push(node.id);
+      queue.push(node.id);
+    }
+  }
+  return out;
+}
+
+/**
+ * Is `targetAgentId` inside a subtree led by `actorAgentId`?
+ *
+ * @param {{nodes: Array}} state
+ * @param {string} actorAgentId
+ * @param {string} targetAgentId
+ * @returns {{inSubtree: boolean, viaNodeId: string|null}}
+ */
+export function leadsTarget(state, actorAgentId, targetAgentId) {
+  const target = state.nodes.find((n) => n.kind === "member" && n.agentId === targetAgentId);
+  if (!target) return { inSubtree: false, viaNodeId: null };
+  for (const unit of state.nodes) {
+    if (unit.kind === "member") continue;
+    if (unit.leaderAgentId !== actorAgentId) continue;
+    const ids = new Set([unit.id, ...subtreeUnitIds(state, unit.id)]);
+    if (target.parentId && ids.has(target.parentId)) return { inSubtree: true, viaNodeId: unit.id };
+  }
+  return { inSubtree: false, viaNodeId: null };
+}
+
+/**
+ * The single authorization decision for `exec` (0.2.14).
+ *
+ * owner    -> company-wide; crossing departments is that role's whole point.
+ * lead     -> ONLY targets inside a subtree it leads (this is the new part).
+ * member   -> may RECEIVE exec, may never push it.
+ * observer -> denied.
+ *
+ * Fail-closed by construction: a missing actor, a missing target, or a target
+ * that is absent from the local tree all deny. `classify("exec")` stays
+ * "unknown" on purpose so the L1/L2 shortcut can never be reached for exec.
+ *
+ * @param {{nodes: Array}} state
+ * @param {string} actorAgentId
+ * @param {string} targetAgentId
+ * @returns {{allowed: boolean, action: string, role: string, level: string, reason: string, needsApproval: boolean, approver: string|null}}
+ */
+export function canExecTarget(state, actorAgentId, targetAgentId) {
+  const actor = `${actorAgentId ?? ""}`.trim();
+  const target = `${targetAgentId ?? ""}`.trim();
+  const role = roleFor(state, actor);
+  const level = classify("exec");
+  const base = { action: "exec", role, level, needsApproval: false, approver: null };
+  const deny = (reason) => ({ ...base, allowed: false, reason });
+  if (!actor) return deny("no actor identity (fail-closed)");
+  if (!target) return deny("no target");
+  if (role === "observer") return deny("actor is not an org member");
+  const targetKnown = state.nodes.some((n) => n.kind === "member" && n.agentId === target);
+  if (role === "owner") {
+    // owner is company-wide BY RULE, so an unregistered target is not an
+    // undecidable case — it is an explicit allowance, and it is recorded.
+    // (Onboarding needs exactly this: exec a new box before it has a node.)
+    return {
+      ...base,
+      allowed: true,
+      targetKnown,
+      reason: targetKnown ? "owner: company-wide" : "owner: company-wide (target absent from local tree — recorded)",
+    };
+  }
+  if (role === "member") return deny("role=member: only owner/lead may push exec");
+  if (!targetKnown) return deny("target is absent from the local tree (fail-closed)");
+  const { inSubtree, viaNodeId } = leadsTarget(state, actor, target);
+  if (!inSubtree) return deny("target is outside every subtree this lead leads");
+  return { ...base, allowed: true, targetKnown, reason: "lead: target inside own subtree", viaNodeId };
 }
