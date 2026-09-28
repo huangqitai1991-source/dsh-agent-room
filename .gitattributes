@@ -1,0 +1,22 @@
+# Normalize line endings so a Windows checkout and a Linux checkout produce
+# the same bytes in the repository.
+* text=auto eol=lf
+
+# Windows-only scripting assets keep CRLF so they run as-is on Windows.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary — never touch
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.tgz binary
+*.db binary
+*.zstd binary
+
+# Keep lockfiles out of diffs and language stats
+pnpm-lock.yaml linguist-generated=true
