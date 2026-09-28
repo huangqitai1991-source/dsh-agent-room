@@ -40,7 +40,7 @@ const ARTIFACT = 'D:\\repo\\dsh-agent-org-0.2.13.tgz';
 const LEDGER = '<workdir>\\release-ledger.jsonl';
 const staged = {
   ts: '2026-09-17T03:09:35Z', version: VERSION, gate: 'candidate', verdict: 'staged',
-  artifact: 'dsh-agent-org-0.2.13.tgz', md5: MD5, bytes: BYTES, commit: COMMIT, actor: 'KEVINKIKI',
+  artifact: 'dsh-agent-org-0.2.13.tgz', md5: MD5, bytes: BYTES, commit: COMMIT, actor: '*****',
 };
 const call = (over = {}) => promoteDecision({
   candPath: CAND_PATH, cand: CAND, staged, version: VERSION, ledger: LEDGER,

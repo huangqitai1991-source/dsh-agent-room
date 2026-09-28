@@ -190,7 +190,7 @@ CASE C 有旁路（期望重启一次并消费掉旁路）：
 
 ## 6. 备份与隔离（G2）
 
-- 备份根**按平台推导，绝不硬编码盘符**：`DSH_IDENTITY_BACKUP_DIR` > `join(dirname(dshHome), "identity-backups")`（配置目录的**同级**，不在其内部）。卡 v3 的必改项：v2 硬编码 `<workdir>\identity-backups`，实测该目录不存在，且团队有一台 macOS 机器（小黄），若硬编码则「备份失败即拒写」会**拒绝每一次身份写入**。
+- 备份根**按平台推导，绝不硬编码盘符**：`DSH_IDENTITY_BACKUP_DIR` > `join(dirname(dshHome), "identity-backups")`（配置目录的**同级**，不在其内部）。卡 v3 的必改项：v2 硬编码 `<workdir>\identity-backups`，实测该目录不存在，且团队有一台 macOS 机器（C），若硬编码则「备份失败即拒写」会**拒绝每一次身份写入**。
 - 路径在本平台**无法解析**（例如 darwin 上的 `D:\…`）⇒ **致命配置错误**（要求显式配置）；路径可解析但**不可写** ⇒ **拒写**但仍运行（把一次目录权限问题升级成节点下线是安全门禁变成故障）。
 - 写前备份 `<备份根>\<文件名>.<YYYYMMDD-HHmmss>.bak`，**校验副本字节数与源一致**，不一致则放弃写入并抛错（底层写入本身会吞错，不能假设成功）。
 - 保留份数 `BACKUP_KEEP = 10`（卡第 3 节把该数字登记为"待测：实现时由 4.5 定义并写入代码常量"）。**只裁剪普通备份**：`.corrupt.bak`（隔离副本）与 `.pre-repair.bak` 是证据，不被日常备份churn裁掉。
@@ -221,7 +221,7 @@ $ node tools/repair-identity.mjs --home <tmp> --backup-dir <tmp-backups>
 === repair-identity: NOTHING HAS BEEN WRITTEN YET ===
   2 candidate agentId(s), strongest first:
   01a0231b-bbe5-720a-97a4-819744eeae76
-    nickname(s) : KEVINKIKI x2, My Company x1, MainControl x1
+    nickname(s) : ***** x2, My Company x1, MainControl x1
     found in    : rooms, org, messages
       - [rooms] rooms/01a098a2-….json members[] (room "studio")
       - [org] org-state.json kind=member "MainControl"
@@ -235,7 +235,7 @@ $ echo $LASTEXITCODE
 $ … --apply                                  → EXIT=1  refusing: --apply requires --agent-id
 $ … --apply --agent-id <不在报告里的 id>      → EXIT=1  it did not appear in the report
 $ … --apply --agent-id <报告里的 id> --from backups → EXIT=1  该 id 不在 "backups" 记录类里（found in: rooms, org, messages）
-$ … --apply --agent-id <报告里的 id> --from org --nickname KEVINKIKI
+$ … --apply --agent-id <报告里的 id> --from org --nickname *****
   === apply ===
     current state : NOT PARSEABLE (Unterminated string in JSON …)
     QUARANTINE: …\identity.json.20260914-144618.corrupt.bak (byte-identical copy kept)
@@ -310,7 +310,7 @@ git -C <repo> revert <commit>
 1. **真实 `dsh web` 端到端**未跑：本会话硬约束禁止启停任何服务（3080 上的 `dsh web` 承载调用方会话）。致命通道是**进程内用宿主真实 `installFailLoud` + 真实构建产物**验证的，宿主侧 `assertEntriesActivated` 那条设计通道未实测。
 2. **`C:\studio\start-studio.cmd` 未更新**：它在本机实际在跑，且在工作区之外，本会话文件沙箱不允许写入（不请求提权）。已提供可直接部署的 `studio\start-studio.cmd`；**该机必须自己把它装到位**，否则 G4 在本机不生效。G4 的停止逻辑是用**真实看门狗文件 + 立即退出的桩**验证的，未用真实 `dsh web` 验证。
 3. **`studio\start-studio.sh` 的语法未在本机执行**：本沙箱内 bash 无法启动（`couldn't create signal pipe, Win32 error 5`），只做了人工审查 + 字节检查（2471 字节、0 个非 ASCII 字节）。`upgrade-studio.ps1` 通过了 PowerShell 解析器校验。
-4. **macOS 路径规则只用纯函数验证**（`assertPlatformResolvableFor(path,'darwin')`），未在小黄那台 darwin 机器上真跑。
+4. **macOS 路径规则只用纯函数验证**（`assertPlatformResolvableFor(path,'darwin')`），未在C那台 darwin 机器上真跑。
 5. **G1 昵称校验只挂"故意设置"处**（`updateProfile`），不在每次 `saveIdentity` 上：否则存量坏昵称（`NAME`）会让启动时的能力合并变成启动故障——卡的回滚条件①正是这种误报停机。
 6. **未做存量清洗**：既不修已损坏的历史行，也不改任何现存 agentId；本版只阻止**新**的破坏。
 7. **`gateway.identity()` 的结构性保证**由"读/写边界闸门"提供，测试用"三次连续调用都抛错 + 源码委托断言"覆盖，未构造完整 DSH 宿主。

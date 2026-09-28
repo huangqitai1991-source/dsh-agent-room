@@ -3,7 +3,7 @@
  *
  * THE DEFECT (field, 2026-09-14)
  *
- * After 小捷 went off duty, the controller spent THREE exec timeouts (45s / 25s /
+ * After A went off duty, the controller spent THREE exec timeouts (45s / 25s /
  * 25s) and one room ping and still could not tell "machine off" from "plugin
  * wedged"; it took a human answer to settle it. The reason is that nothing on the
  * room side described RECENT CONTACT: a member record carried `joinedAt` only (an
@@ -49,7 +49,7 @@ const { RoomService } = await import(`${LIB}/host/room-service.js`);
 const peerServerModule = await import(`${LIB}/host/peer-server.js`);
 const { execResultOk } = peerServerModule;
 
-const MEMBER = "01a094c1-7159-7555-9222-65241c607320"; // 小捷
+const MEMBER = "01a094c1-7159-7555-9222-65241c607320"; // A
 const ADDRESS = "198.51.100.11:9317";
 const EXEC_RESULT_PREFIX = "[org:exec:result]";
 
@@ -78,7 +78,7 @@ guarded("D-20: a join stamps lastSeenAt/lastSeenAddress, and a touch moves ONLY 
   const service = new RoomService({ dataDir: await mk("room") });
   await service.boot();
   const room = await service.createRoom({ title: "K family", type: "persistent" });
-  const agent = { agentId: MEMBER, nickname: "小捷", capabilities: ["pwsh"], createdAt: new Date().toISOString() };
+  const agent = { agentId: MEMBER, nickname: "A", capabilities: ["pwsh"], createdAt: new Date().toISOString() };
 
   service.joinOwnedRoom(room.roomId, agent, { address: ADDRESS });
   const joined = memberRow(service.getOwnedRoom(room.roomId), MEMBER);
@@ -107,7 +107,7 @@ guarded("D-20: lastExecAt/lastExecOk separate 'reachable' from 'can run commands
   const service = new RoomService({ dataDir: dir });
   await service.boot();
   const room = await service.createRoom({ title: "K family", type: "persistent" });
-  service.joinOwnedRoom(room.roomId, { agentId: MEMBER, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() }, { address: ADDRESS });
+  service.joinOwnedRoom(room.roomId, { agentId: MEMBER, nickname: "A", capabilities: [], createdAt: new Date().toISOString() }, { address: ADDRESS });
 
   const before = memberRow(service.getOwnedRoom(room.roomId), MEMBER);
   assert.strictEqual(before.lastExecAt, undefined, "a member that never answered an exec has NO exec stamp (unknown, not false)");
@@ -174,7 +174,7 @@ guarded("D-20: the liveness fields reach GET /agent-room-api/state (state alone 
     const room = await svc.gateway.createRoom({ title: "liveness", type: "persistent" });
     svc.roomService.joinOwnedRoom(
       room.roomId,
-      { agentId: MEMBER, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() },
+      { agentId: MEMBER, nickname: "A", capabilities: [], createdAt: new Date().toISOString() },
       { address: ADDRESS },
     );
     svc.roomService.touchMember(room.roomId, MEMBER, { execOk: true });

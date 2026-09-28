@@ -15,8 +15,8 @@ No plugin runtime behaviour changed. `src/**` is untouched: this release is a ga
 
 ## 2. Where the specification came from
 
-小黄 (agentId `01a094c1-7159-7555-9222-65241c607320`), on its own macOS machine, spec
-`~/.dsh/agent-room/duty-workspace/小黄-符号级锚点门-规格.md`, written after a full read of
+C (agentId `01a094c1-7159-7555-9222-65241c607320`), on its own macOS machine, spec
+`~/.dsh/agent-room/duty-workspace/C-符号级锚点门-规格.md`, written after a full read of
 `boyin111-1/dsh-doctor` (`ANCHOR_BASELINE_VERSION` / `ANCHORS[]` / `checkAnchorBaseline()` /
 `--verify-anchors`) and a read-only reproduction of the algorithm on
 `@deepseek-ai/dsh` **0.1.1-rc.2**: **5 ✓ / 0 ✗**.
@@ -127,7 +127,7 @@ primitives ever appear in the gate's code.
    rather than *moved*. A human has to tell those apart.
 5. Hit count is not a strength argument (`hits >= 5` is a performance stop, not confidence).
 6. The gate does not cover a hung install, a stale watchdog lock, or long-message truncation.
-7. The gate does not fix npm-prefix inconsistency (小黄 measured `dsh` in `~/.npm-global` while
+7. The gate does not fix npm-prefix inconsistency (C measured `dsh` in `~/.npm-global` while
    `npm prefix -g` answered `/usr/local`); that needs its own check.
 
 ## 7. Verification

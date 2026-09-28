@@ -48,7 +48,7 @@ const ROOT = "<workdir>\\_rename-tests";
 const AGENT_ID = "01a0231b-bbe5-720a-97a4-819744eeae76";
 const PEER_ID = "01a0281a-52de-7c4d-a1e9-7e6db367d3dd";
 const OWNED_ROOM = "01a09d61-6bff-7899-881d-b63f6434eef8";
-const OLD_NAME = "KEVINKIKI";
+const OLD_NAME = "*****";
 const NEW_NAME = "\u4e3b\u63a7\u00b7\u603b\u63a7"; // 主控·总控
 
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
@@ -454,7 +454,7 @@ test("a cold identity cache is refused, and nothing is minted or written", async
 });
 
 test("G1 reuse: assertValidNickname is the 0.1.38 predicate, applied before any write", () => {
-  assert.strictEqual(assertValidNickname("  KEVINKIKI  "), "KEVINKIKI");
+  assert.strictEqual(assertValidNickname("  *****  "), "*****");
   assert.strictEqual(assertValidNickname(NEW_NAME), NEW_NAME);
   for (const bad of ["", "   ", "NAME", "x\uFFFDy", "??", "a??b"]) {
     assert.ok(nicknameProblem(bad), `${JSON.stringify(bad)} is a damage class`);
@@ -567,7 +567,7 @@ test("backfill: --set-name without --apply writes nothing", async () => {
   const before = await snapshot(identityFile);
   const orgBefore = await snapshot(orgFile);
 
-  const { code, out } = await runTool(["--home", base, "--repair-names", "--set-name", `${AGENT_ID}=KEVINKIKI`]);
+  const { code, out } = await runTool(["--home", base, "--repair-names", "--set-name", `${AGENT_ID}=*****`]);
 
   assert.strictEqual(code, 0);
   assert.match(out, /--set-name requires --apply as well; nothing was written/);

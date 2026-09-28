@@ -50,7 +50,7 @@ const OTHER_ID = "01a09dac-3793-77b1-b6e8-9e4ebdb4041e";
 const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
 
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
-const identityJson = (agentId = AGENT_ID, nickname = "KEVINKIKI") =>
+const identityJson = (agentId = AGENT_ID, nickname = "*****") =>
   JSON.stringify({ agentId, nickname, capabilities: [], createdAt: "2026-08-21T06:56:55.269Z" }, null, 2);
 
 await mkdir(ROOT, { recursive: true });
@@ -425,7 +425,7 @@ test("NEW: a boot that reaches the end clears the watchdog marker", async () => 
 });
 
 test("NEW: G1 content guards reject the damage classes the card names", async () => {
-  assert.equal(nicknameProblem("KEVINKIKI"), null);
+  assert.equal(nicknameProblem("*****"), null);
   for (const bad of ["NAME", "  NAME  ", "", "   ", "a\uFFFDb", "??", "a??b"]) {
     assert.ok(nicknameProblem(bad), `${JSON.stringify(bad)} must be rejected`);
   }
@@ -449,7 +449,7 @@ test("NEW: G1 content guards reject the damage classes the card names", async ()
     () => new RoomService({ dataDir: clean.dataDir }).updateProfile({ nickname: "NAME" }),
     /NAME/,
   );
-  assert.equal(JSON.parse(await readFile(clean.identityFile, "utf8")).nickname, "KEVINKIKI", "the bad nickname was not written");
+  assert.equal(JSON.parse(await readFile(clean.identityFile, "utf8")).nickname, "*****", "the bad nickname was not written");
 });
 
 test("NEW: stripBom only removes a leading BOM", () => {

@@ -5,7 +5,7 @@
  *
  * The rule (measured 2026-09-20): a target whose LOCAL org copy is provably older
  * than the authority's must not hand out rights that a correct copy would refuse
- * (小捷's copy still carried 小婷 as a lead for two days). Only POSITIVE evidence
+ * (A's copy still carried D as a lead for two days). Only POSITIVE evidence
  * blocks — an idle fleet reports `unknown`, which must NOT be read as a failure.
  */
 import assert from "node:assert";

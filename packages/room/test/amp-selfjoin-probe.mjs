@@ -91,7 +91,7 @@ async function main() {
   wire(selfNode, roomId);
   console.log(`[setup] SELF-JOIN client connected: ${selfClient.connected}`);
 
-  // ---- a normal remote member (the "小麦" analogue) ----
+  // ---- a normal remote member (the "B" analogue) ----
   const bService = new RoomService({ dataDir: await mk("B"), onNeedServer: undefined });
   await bService.boot();
   const bServer = new PeerServer({ port: PORT + 1, service: bService });

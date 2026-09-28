@@ -16,7 +16,7 @@ POST /agent-room-api/join  {"roomId":"01a098a2-2015-7a1d-b5f7-9eca45afa65d",
 
 `192.168.31.82` is **not** an address of `主控` — its IPv4 interfaces are exactly `100.64.44.107`
 (Tailscale), `172.19.208.1` (MEmu), `192.168.137.1`, `192.168.31.204` (WLAN), `127.0.0.1`. That
-address is the **room OWNER** (小婷), as its own discovery beacon says:
+address is the **room OWNER** (D), as its own discovery beacon says:
 
 ```json
 {"kind":"agent-room.beacon","nodeId":"01a09483-3668-7bdf-9cc2-0180f314c8cf",

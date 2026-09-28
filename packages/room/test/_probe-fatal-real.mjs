@@ -57,7 +57,7 @@ console.log(`  damaged file : ${identityFile}`);
 if (mode === "clean") {
   // Control: a healthy identity boots, so the probe proves the fatal channel is
   // driven by corruption and not by the probe itself starting something broken.
-  fs.writeFileSync(identityFile, JSON.stringify({ agentId: "01a0231b-bbe5-720a-97a4-819744eeae76", nickname: "KEVINKIKI", capabilities: [], createdAt: "n" }, null, 2));
+  fs.writeFileSync(identityFile, JSON.stringify({ agentId: "01a0231b-bbe5-720a-97a4-819744eeae76", nickname: "*****", capabilities: [], createdAt: "n" }, null, 2));
 }
 const seeded = fs.readFileSync(identityFile);
 console.log(`  bytes/sha    : ${seeded.length} / ${sha256(seeded).slice(0, 16)}`);

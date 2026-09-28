@@ -222,7 +222,7 @@ export class Persistence {
    * state — silently reset it and the machine stopped waking for room messages
    * until a human re-enabled it room by room. The upgrade script compensated
    * with a fail-soft POST afterwards, which is why one machine came back
-   * listening and another (小麦, after 0.1.40) read `listening=false` and had to
+   * listening and another (B, after 0.1.40) read `listening=false` and had to
    * be rescued by hand.
    *
    * Granularity is the existing one: the file lives in this profile's dataDir,

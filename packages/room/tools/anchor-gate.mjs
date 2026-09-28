@@ -9,9 +9,9 @@
  *   the symbols decide WHETHER WE MAY STILL BELIEVE OURSELVES.
  *
  * WHERE IT COMES FROM
- *   Specification by 小黄 (agentId 01a094c1-7159-7555-9222-65241c607320), based on a full
+ *   Specification by C (agentId 01a094c1-7159-7555-9222-65241c607320), based on a full
  *   read of boyin111-1/dsh-doctor (`ANCHOR_BASELINE_VERSION` / `ANCHORS[]` /
- *   `checkAnchorBaseline()` / `--verify-anchors`). 小黄 reproduced the algorithm read-only on
+ *   `checkAnchorBaseline()` / `--verify-anchors`). C reproduced the algorithm read-only on
  *   macOS with @deepseek-ai/dsh 0.1.1-rc.2 and got 5 OK / 0 MISSING.
  *
  * THE FOUR HARD REQUIREMENTS (all four are covered by test/anchor-gate.test.mjs)
@@ -53,7 +53,7 @@ import { dirname, join, basename, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * The version whose artefacts the anchor list below was last verified against. 小黄 measured
+ * The version whose artefacts the anchor list below was last verified against. C measured
  * 5/5 alive on 0.1.1-rc.2, and the same five tokens were re-measured alive on the control
  * machine's own 0.1.1-rc.2 install. Every dsh upgrade must re-run the export procedure and
  * update this constant AND the tokens together -- otherwise the gate goes quietly false-green.
@@ -220,7 +220,7 @@ export function resolveAnchorRoot(dir) {
 
 /**
  * PATH-BASED discovery (`command -v dsh` / `where dsh`), never a hard-coded prefix: on macOS
- * 小黄 found `dsh` in ~/.npm-global while `npm prefix -g` answered /usr/local, so any
+ * C found `dsh` in ~/.npm-global while `npm prefix -g` answered /usr/local, so any
  * npm-prefix-based lookup finds the wrong tree or nothing at all.
  */
 function discoverFromPath(env = process.env) {
@@ -289,7 +289,7 @@ function resolveSearchDir(root, domain) {
       try { real = realpathSync(candidate); } catch { continue; }
       try { if (!lstatSync(real).isDirectory()) continue; } catch { continue; }
     }
-    // Report paths the way 小黄's measurement did: relative to the directory that holds
+    // Report paths the way C's measurement did: relative to the directory that holds
     // `node_modules` (so the line reads `node_modules/@deepseek-ai/<pkg>/lib/index.js`).
     const scopeBase = dirname(dirname(dirname(real)));
     return { domain, pkg, dir: real, scopeBase, found: true };

@@ -79,9 +79,9 @@ const {
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const ROOM = "01a098a2-2015-7a1d-b5f7-9eca45afa65d";
-const SELF = "01a0231b-bbe5-720a-97a4-819744eeae76"; // this node (KEVINKIKI)
-const REMOTE_HUMAN = "01a09483-3668-7bdf-9cc2-0180f314c8cf"; // 小婷
-const REMOTE_AGENT = "01a094c1-7159-7555-9222-65241c607320"; // 小黄
+const SELF = "01a0231b-bbe5-720a-97a4-819744eeae76"; // this node (*****)
+const REMOTE_HUMAN = "01a09483-3668-7bdf-9cc2-0180f314c8cf"; // D
+const REMOTE_AGENT = "01a094c1-7159-7555-9222-65241c607320"; // C
 const SEQ_315 = 315; // the exact production (roomId, seq) that woke 18 times
 
 /** Same node:test idiom as the other suites (see selfjoin.test.mjs). */
@@ -96,7 +96,7 @@ const guarded = (name, fn) =>
     }
   });
 
-const msg = (seq, from, human) => ({ seq, from, fromNickname: from === SELF ? "KEVINKIKI" : "小婷", human, text: "x" });
+const msg = (seq, from, human) => ({ seq, from, fromNickname: from === SELF ? "*****" : "D", human, text: "x" });
 
 guarded("wake watermark: monotonic non-regression, and `regressed` is the tripwire (0.1.41)", () => {
   const wm = new WakeWatermark();
@@ -362,9 +362,9 @@ guarded("runtime: the wake counters really reach GET /agent-room-api/state (not 
 
 /* ======================= 0.1.45 — the wake RULE and the sender's view ======================= */
 
-const SELF_JIE = "01a0281a-52de-7c4d-a1e9-7e6db367d3dd"; // 小捷
-const CTRL_TING = "01a09483-3668-7bdf-9cc2-0180f314c8cf"; // 小婷 — the room's CONTROLLER (owner's own record)
-const SELF_NODE = { agentId: SELF, nickname: "KEVINKIKI" };
+const SELF_JIE = "01a0281a-52de-7c4d-a1e9-7e6db367d3dd"; // A
+const CTRL_TING = "01a09483-3668-7bdf-9cc2-0180f314c8cf"; // D — the room's CONTROLLER (owner's own record)
+const SELF_NODE = { agentId: SELF, nickname: "*****" };
 
 guarded("0.1.45 dispatch signal: a message that NAMES this node wakes it, whatever `human` claims", () => {
   // The production samples. seq 3267 / 3606 were `human:false` with no mention and
@@ -372,11 +372,11 @@ guarded("0.1.45 dispatch signal: a message that NAMES this node wakes it, whatev
   // Every form below is one the fleet actually writes (or the owner stores).
   const cases = [
     ["mentions[] carries the canonical agentId", { from: REMOTE_AGENT, human: false, mentions: [SELF], text: "【派活】请跑回归" }],
-    ["mentions[] carries the nickname (the pre-resolution form the tool accepts)", { from: REMOTE_AGENT, human: false, mentions: ["KEVINKIKI"], text: "【派活】请跑回归" }],
-    ["@nickname in the text", { from: REMOTE_AGENT, human: false, text: "@KEVINKIKI 请跑回归" }],
+    ["mentions[] carries the nickname (the pre-resolution form the tool accepts)", { from: REMOTE_AGENT, human: false, mentions: ["*****"], text: "【派活】请跑回归" }],
+    ["@nickname in the text", { from: REMOTE_AGENT, human: false, text: "@***** 请跑回归" }],
     ["@agentId in the text", { from: REMOTE_AGENT, human: false, text: "@" + SELF + " 请跑回归" }],
-    ["the full-width ＠ a Chinese IME produces", { from: REMOTE_AGENT, human: false, text: "＠KEVINKIKI 请跑回归" }],
-    ["the bracketed dispatch header used in this room today", { from: REMOTE_AGENT, human: false, text: "【小捷 → @KEVINKIKI · 请裁决】正文如下" }],
+    ["the full-width ＠ a Chinese IME produces", { from: REMOTE_AGENT, human: false, text: "＠***** 请跑回归" }],
+    ["the bracketed dispatch header used in this room today", { from: REMOTE_AGENT, human: false, text: "【A → @***** · 请裁决】正文如下" }],
     ["a bare agentId (36 chars, unambiguous)", { from: REMOTE_AGENT, human: false, text: "收件人 " + SELF + " 请回复" }],
   ];
   for (const [label, message] of cases) {
@@ -386,15 +386,15 @@ guarded("0.1.45 dispatch signal: a message that NAMES this node wakes it, whatev
     assert.ok(decision.detail, `${label}: the matched token must be reportable in the log line`);
   }
   // The boundary that keeps this from being a storm: a nickname in PROSE is not an
-  // address. Measured counterexample from today's room — 小黄's report (seq 3703)
-  // names 小婷/小捷/小麦 while discussing the roster, and wakes none of them.
+  // address. Measured counterexample from today's room — C's report (seq 3703)
+  // names D/A/B while discussing the roster, and wakes none of them.
   const prose = decideListenWake({
-    message: { from: REMOTE_AGENT, human: false, text: "分工：3/4/5/6 归小婷、小麦、小捷，我只说一句" },
-    self: { agentId: SELF_JIE, nickname: "小捷" },
+    message: { from: REMOTE_AGENT, human: false, text: "分工：3/4/5/6 归D、B、A，我只说一句" },
+    self: { agentId: SELF_JIE, nickname: "A" },
   });
   assert.strictEqual(prose.wake, false, "prose that merely names a colleague must not wake them (storm shape)");
   assert.strictEqual(prose.reason, "not-addressed", "and it must still carry a reason so the denial can be logged");
-  assert.strictEqual(mentionsThisNode({ text: "小捷说这条要改" }, { agentId: SELF_JIE, nickname: "小捷" }), undefined);
+  assert.strictEqual(mentionsThisNode({ text: "A说这条要改" }, { agentId: SELF_JIE, nickname: "A" }), undefined);
 });
 
 guarded("0.1.45: an unaddressed post is DENIED WITH A REASON — the silent branch of 0.1.44 is gone", () => {
@@ -403,37 +403,37 @@ guarded("0.1.45: an unaddressed post is DENIED WITH A REASON — the silent bran
   // `mentions:null`, and addressed by a NAME LIST rather than by `@`.
   const questionnaire = {
     from: SELF,
-    fromNickname: "KEVINKIKI",
+    fromNickname: "*****",
     human: false,
-    text: "【总控 · 问卷：升级后的实用性与稳定性 + B端销售缺什么 + room与org结合怎么看】\n填写人：小婷、小黄、小麦、小捷（各自单独回一条）｜汇总人：总控",
+    text: "【总控 · 问卷：升级后的实用性与稳定性 + B端销售缺什么 + room与org结合怎么看】\n填写人：D、C、B、A（各自单独回一条）｜汇总人：总控",
   };
-  const jie = decideListenWake({ message: questionnaire, self: { agentId: SELF_JIE, nickname: "小捷" } });
+  const jie = decideListenWake({ message: questionnaire, self: { agentId: SELF_JIE, nickname: "A" } });
   assert.strictEqual(jie.wake, false, "a name list is not an address: no @, no mention, no wake");
   assert.strictEqual(jie.reason, "not-addressed", "0.1.44 produced NO reason here — that silence was the defect");
 
-  // The same questionnaire, addressed: it wakes 小捷 AND NOT 小黄. That is the whole
+  // The same questionnaire, addressed: it wakes A AND NOT C. That is the whole
   // contract of this version (and what `woken` now reports to the sender).
-  const addressed = { ...questionnaire, mentions: [SELF_JIE], text: questionnaire.text.replace("小捷", "@小捷") };
-  assert.strictEqual(decideListenWake({ message: addressed, self: { agentId: SELF_JIE, nickname: "小捷" } }).reason, "mention");
-  const other = decideListenWake({ message: addressed, self: REMOTE_AGENT_ID_FOR("小黄") });
+  const addressed = { ...questionnaire, mentions: [SELF_JIE], text: questionnaire.text.replace("A", "@A") };
+  assert.strictEqual(decideListenWake({ message: addressed, self: { agentId: SELF_JIE, nickname: "A" } }).reason, "mention");
+  const other = decideListenWake({ message: addressed, self: REMOTE_AGENT_ID_FOR("C") });
   assert.strictEqual(other.wake, false, "a machine that was NOT named must not wake (no storm)");
   assert.strictEqual(other.reason, "not-addressed");
   // Sanity on the fixture itself: the two nodes really are different identities.
   assert.notStrictEqual(REMOTE_AGENT, SELF_JIE);
 });
 
-/** The deciding node for 小黄 (the fleet's fourth identity). */
+/** The deciding node for C (the fleet's fourth identity). */
 function REMOTE_AGENT_ID_FOR(nickname) {
   return { agentId: REMOTE_AGENT, nickname };
 }
 
 guarded("0.1.45 storm guard: machine self-test stamps and control frames NEVER wake anyone", () => {
   const stamps = [
-    "小捷升 0.1.43 自证",
+    "A升 0.1.43 自证",
     "XIAOHUANG 0.1.44 verify",
     "verify 0.1.44",
-    "小麦 0.1.45 自检通过",
-    "KEVINKIKI 0.1.45 self-verify",
+    "B 0.1.45 自检通过",
+    "***** 0.1.45 self-verify",
   ];
   for (const text of stamps) {
     assert.strictEqual(isMachineSelfTestFrame(text), true, `a self-test stamp must be recognised: ${text}`);
@@ -441,7 +441,7 @@ guarded("0.1.45 storm guard: machine self-test stamps and control frames NEVER w
     // stamp that names a target cannot start a wake (all five nodes run listening —
     // a stamp that woke its readers is the documented wake-storm shape).
     const decision = decideListenWake({
-      message: { from: REMOTE_AGENT, human: true, mentions: [SELF], text: text + " @KEVINKIKI" },
+      message: { from: REMOTE_AGENT, human: true, mentions: [SELF], text: text + " @*****" },
       self: SELF_NODE,
     });
     assert.strictEqual(decision.wake, false, `a self-test stamp must not wake anyone: ${text}`);
@@ -451,10 +451,10 @@ guarded("0.1.45 storm guard: machine self-test stamps and control frames NEVER w
   // The guard must NOT swallow real work. These are the shapes it must let through —
   // including a short order that merely uses the word verify, and a real report.
   const notStamps = [
-    "请 verify 0.1.45 后回复 @KEVINKIKI",
+    "请 verify 0.1.45 后回复 @*****",
     "0.1.45 升级后需要你自证一下吗？",
-    "【总控 · 问卷】\n填写人：小婷、小黄、小麦、小捷（各自单独回一条）",
-    "。【小捷 · 漏唤缺陷修复意见】\n\n## 一、六个问题\n1. human=false 该不该唤醒？" + "x".repeat(200),
+    "【总控 · 问卷】\n填写人：D、C、B、A（各自单独回一条）",
+    "。【A · 漏唤缺陷修复意见】\n\n## 一、六个问题\n1. human=false 该不该唤醒？" + "x".repeat(200),
     "verify",
   ];
   for (const text of notStamps) {
@@ -466,7 +466,7 @@ guarded("0.1.45 storm guard: machine self-test stamps and control frames NEVER w
   // agent-org already, and they must never wake the room's listening agent even when
   // they name it (that is the "control frames mixed into chat" family).
   const control = decideListenWake({
-    message: { from: REMOTE_AGENT, human: true, mentions: [SELF], text: "[org:exec:result] 01a0231b… exit=0 @KEVINKIKI" },
+    message: { from: REMOTE_AGENT, human: true, mentions: [SELF], text: "[org:exec:result] 01a0231b… exit=0 @*****" },
     self: SELF_NODE,
   });
   assert.strictEqual(control.wake, false);
@@ -478,7 +478,7 @@ guarded("0.1.45: card ④ holds, `human` is a FALLBACK not the gate, and NO auth
   // must not re-open it (a node that @-mentions itself is the same defect shape).
   for (const human of [true, false]) {
     const own = decideListenWake({
-      message: { from: SELF, human, mentions: [SELF], text: "@KEVINKIKI 我自己说的话" },
+      message: { from: SELF, human, mentions: [SELF], text: "@***** 我自己说的话" },
       self: SELF_NODE,
     });
     assert.strictEqual(own.wake, false, `own-authored (human=${human}) must never wake`);
@@ -490,25 +490,25 @@ guarded("0.1.45: card ④ holds, `human` is a FALLBACK not the gate, and NO auth
   assert.strictEqual(humanOnly.reason, "human-fallback", "the legacy channel is now a FALLBACK — the name says so");
   assert.deepStrictEqual([...WAKE_ADMITTED], ["mention", "human-fallback"], "only these two reasons may wake a node");
 
-  // 0.1.45 REVIEW OUTCOME (小捷, room seq 3728): the first draft admitted every message
+  // 0.1.45 REVIEW OUTCOME (A, room seq 3728): the first draft admitted every message
   // authored by the room's CONTROLLER, i.e. it would have turned the owner's status
   // reports into a four-machine broadcast (measured: 6 such reports that day ⇒ 24
   // wasted wakes). "Is this a dispatch" cannot be inferred from WHO wrote it — the
   // same mistake `human:true` was, one layer up. So there is no author-based clause,
   // and these two assertions are what keep it out.
   const controllerPost = decideListenWake({
-    message: { from: CTRL_TING, human: false, text: "【总控 · D-28 现场验证结果：小婷 ✓ 通过】多行汇报，不是派活" },
+    message: { from: CTRL_TING, human: false, text: "【总控 · D-28 现场验证结果：D ✓ 通过】多行汇报，不是派活" },
     self: SELF_NODE,
   });
   assert.strictEqual(
     controllerPost.wake,
     false,
-    "an UN-addressed message from the room's controller must not wake anyone (0.1.45 review, 小捷)",
+    "an UN-addressed message from the room's controller must not wake anyone (0.1.45 review, A)",
   );
   assert.strictEqual(controllerPost.reason, "not-addressed");
   // The controller is woken like anyone else — by being ADDRESSED.
   assert.strictEqual(
-    decideListenWake({ message: { from: REMOTE_AGENT, human: false, mentions: [CTRL_TING], text: "请小婷复核" }, self: { agentId: CTRL_TING, nickname: "小婷" } }).reason,
+    decideListenWake({ message: { from: REMOTE_AGENT, human: false, mentions: [CTRL_TING], text: "请D复核" }, self: { agentId: CTRL_TING, nickname: "D" } }).reason,
     "mention",
   );
 });
@@ -522,7 +522,7 @@ guarded("0.1.45 counters: every rule outcome is countable, and the legacy 0.1.41
   wm.noteSelfAuthored(); // the 0.1.41 alias
   wm.noteWokenBy("mention");
   wm.noteWokenBy("human-fallback");
-  // 0.1.45b: the three "the sweep never looked" counters (小捷 #2/#3, 小黄's window).
+  // 0.1.45b: the three "the sweep never looked" counters (A #2/#3, C's window).
   wm.notePendingSkip();
   wm.notePendingSkip();
   wm.noteSeedSkip();
@@ -576,9 +576,9 @@ guarded("0.1.45 static guard: the decision point calls the shared rule, and no d
     "the denial line must name the seq, the rule and the author",
   );
   // ...and the three "the sweep never looked" paths must leave a trace too (0.1.45b):
-  assert.match(src, /this\.wakeWatermark\.notePendingSkip\(\);/, "a pending-window skip must be counted (小捷's list item #3)");
-  assert.match(src, /this\.wakeWatermark\.noteSeedSkip\(\);/, "seeding the cursor must be counted (小捷's list item #2 family)");
-  assert.match(src, /const missed = lastSeq - seen - fresh\.length;/, "the read-window gap must be computed (小黄's finding, seq 3729)");
+  assert.match(src, /this\.wakeWatermark\.notePendingSkip\(\);/, "a pending-window skip must be counted (A's list item #3)");
+  assert.match(src, /this\.wakeWatermark\.noteSeedSkip\(\);/, "seeding the cursor must be counted (A's list item #2 family)");
+  assert.match(src, /const missed = lastSeq - seen - fresh\.length;/, "the read-window gap must be computed (C's finding, seq 3729)");
   assert.match(src, /this\.wakeWatermark\.noteWindowGap\(missed\);/, "and counted, with how many messages it swallowed");
   assert.match(src, /recentMessagesFor\(roomId, WAKE_WINDOW_ROWS\)/, "the sweep must read the widened window, not the old 20 rows");
   // The denial LOGGING policy must stay volume-bounded (the 411 MB lesson): bus frames
@@ -591,7 +591,7 @@ guarded("0.1.45 static guard: the decision point calls the shared rule, and no d
   );
   // The admission line names the rule that admitted the wake.
   assert.match(src, /", rule=" \+ pick\.decision\.reason/, "the woken line must say WHICH rule woke this node");
-  // NO author-based admission: the review (小捷, seq 3728) removed the controller
+  // NO author-based admission: the review (A, seq 3728) removed the controller
   // clause from the WAKE PATH specifically. `Room.controllerAgentId` still exists in
   // this file as DATA (it is published in /state and moved by transferController), so
   // the assertion is scoped to the wake path — the same scoping the 0.1.41 guard uses.
@@ -671,7 +671,7 @@ guarded("0.1.45 runtime: the sweep WAKES for a mention and LOGS A REASON for eve
     // node is always excluded from its own targets by card ④).
     svc.roomService.joinOwnedRoom(
       room.roomId,
-      { agentId: SELF_JIE, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() },
+      { agentId: SELF_JIE, nickname: "A", capabilities: [], createdAt: new Date().toISOString() },
       {},
     );
     svc.setListening(room.roomId, true);
@@ -680,7 +680,7 @@ guarded("0.1.45 runtime: the sweep WAKES for a mention and LOGS A REASON for eve
     // (a) THE FIX: the dispatch our scripts send — `human:false`, but it NAMES this node.
     const named = await svc.roomService.addChatMessage(
       room.roomId,
-      { agentId: SELF_JIE, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() },
+      { agentId: SELF_JIE, nickname: "A", capabilities: [], createdAt: new Date().toISOString() },
       { text: "【派活】@" + (me.nickname ?? me.agentId) + " 请跑回归", human: false, mentions: [me.agentId] },
     );
     svc.listenSeen.set(room.roomId, named.seq - 1);
@@ -698,7 +698,7 @@ guarded("0.1.45 runtime: the sweep WAKES for a mention and LOGS A REASON for eve
     svc.listenPending.delete(room.roomId); // the 60 s re-arm, compressed for the probe
     const unaddressed = await svc.roomService.addChatMessage(
       room.roomId,
-      { agentId: SELF_JIE, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() },
+      { agentId: SELF_JIE, nickname: "A", capabilities: [], createdAt: new Date().toISOString() },
       { text: "【总控 · 通知：今晚全员升级（这条不点名任何人）】", human: false },
     );
     await svc.sweepListening();
@@ -708,18 +708,18 @@ guarded("0.1.45 runtime: the sweep WAKES for a mention and LOGS A REASON for eve
     const deniedLine = lines.find((l) => l.includes(`listening: denied seq=${unaddressed.seq}`));
     assert.ok(deniedLine, "a denied message MUST leave a line naming its seq (the defect was the missing line)");
     assert.match(deniedLine, /rule=not-addressed/, "the line must name the rule that denied it");
-    assert.match(deniedLine, /from=小捷\//, "the line must name the author");
+    assert.match(deniedLine, /from=A\//, "the line must name the author");
     assert.strictEqual(svc.wakeWatermark.stats().deniedNotAddressed, 1, "and the denial must be counted");
     // Nothing bypassed the guard: the tripwire stays 0.
     assert.strictEqual(svc.wakeWatermark.stats().regressed, 0);
 
-    // (c) 小黄's finding, made measurable (room seq 3729): with a FINITE read window,
+    // (c) C's finding, made measurable (room seq 3729): with a FINITE read window,
     // messages can fall outside it and be neither woken for nor denied. The window is
     // now 200 rows — large enough to cover several sweep periods — and whatever still
     // falls through is COUNTED and NAMED instead of vanishing.
     svc.listenPending.delete(room.roomId);
     const burst = WAKE_WINDOW_ROWS + 7;
-    const author = { agentId: SELF_JIE, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() };
+    const author = { agentId: SELF_JIE, nickname: "A", capabilities: [], createdAt: new Date().toISOString() };
     for (let i = 0; i < burst; i += 1) {
       await svc.roomService.addChatMessage(room.roomId, author, { text: "【org-free noise " + i + "】", human: false });
     }
@@ -733,7 +733,7 @@ guarded("0.1.45 runtime: the sweep WAKES for a mention and LOGS A REASON for eve
     assert.ok(gapStats.windowGapMessages >= 1, "and how many messages were never candidates");
     assert.ok(
       lines.some((l) => l.includes("listening: window gap")),
-      "the gap must be NAMED in the log, not just counted (this is the hole 小黄 found)",
+      "the gap must be NAMED in the log, not just counted (this is the hole C found)",
     );
   } finally {
     console.error = realError;
@@ -749,7 +749,7 @@ guarded("0.1.45 runtime: POST /chat answers with `woken`, so 'delivered' can nev
     const room = await svc.gateway.createRoom({ title: "K family", type: "persistent" });
     svc.roomService.joinOwnedRoom(
       room.roomId,
-      { agentId: SELF_JIE, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() },
+      { agentId: SELF_JIE, nickname: "A", capabilities: [], createdAt: new Date().toISOString() },
       {},
     );
     // The controller seat is deliberately LEFT with the member here: with no
@@ -772,7 +772,7 @@ guarded("0.1.45 runtime: POST /chat answers with `woken`, so 'delivered' can nev
     };
     try {
       // The DISPATCH form our scripts send: human:false + an address.
-      const named = await post({ text: "@小捷 请交问卷", human: false, mentions: ["小捷"] });
+      const named = await post({ text: "@A 请交问卷", human: false, mentions: ["A"] });
       console.log(`  [preview] addressed: ${JSON.stringify(named.json.data)}`);
       assert.strictEqual(named.status, 200);
       assert.strictEqual(named.json.data.woken, 1, "an addressed post must report exactly one woken member");
@@ -787,7 +787,7 @@ guarded("0.1.45 runtime: POST /chat answers with `woken`, so 'delivered' can nev
       }
       assert.strictEqual(named.json.data.confirmedByOwner, true, "the owner still confirms it (web.ts unchanged there)");
       // The 0.1.44 regression itself: same channel, same author, no address.
-      const unaddressed = await post({ text: "【总控 · 问卷】填写人：小婷、小黄、小麦、小捷", human: false });
+      const unaddressed = await post({ text: "【总控 · 问卷】填写人：D、C、B、A", human: false });
       console.log(`  [preview] unaddressed: woken=${unaddressed.json.data.woken} reasons=${JSON.stringify(unaddressed.json.data.wake.reasons)}`);
       assert.strictEqual(
         unaddressed.json.data.woken,
@@ -797,7 +797,7 @@ guarded("0.1.45 runtime: POST /chat answers with `woken`, so 'delivered' can nev
       assert.deepStrictEqual(unaddressed.json.data.wake.targets, []);
       assert.strictEqual(unaddressed.json.data.confirmedByOwner, true, "it is still DELIVERED — that was never the problem");
 
-      // 0.1.45 REVIEW OUTCOME (小捷, room seq 3728): even the room's CONTROLLER — the
+      // 0.1.45 REVIEW OUTCOME (A, room seq 3728): even the room's CONTROLLER — the
       // seat that is authoritative for judging — does not get a broadcast. Give the
       // seat back to this node and the same unaddressed post must STILL report
       // woken:0; the first draft of this version admitted it and would have woken all
@@ -815,7 +815,7 @@ guarded("0.1.45 runtime: POST /chat answers with `woken`, so 'delivered' can nev
         "the fixture must really be the controller, or this assertion proves nothing",
       );
       // A machine self-test stamp is refused as well (storm guard).
-      const stamp = await post({ text: "KEVINKIKI 0.1.45 self-verify", human: false });
+      const stamp = await post({ text: "***** 0.1.45 self-verify", human: false });
       assert.strictEqual(stamp.json.data.woken, 0, "a self-test stamp must not wake anyone");
     } finally {
       await new Promise((r) => server.close(r));
@@ -833,11 +833,11 @@ guarded("0.1.45 runtime: the denial LOG stays bounded — chat denials are named
   console.error = (...args) => { lines.push(args.map((a) => String(a)).join(" ")); };
   try {
     const room = await svc.gateway.createRoom({ title: "K family", type: "persistent" });
-    const mk = (seq, reason, text) => ({ message: { seq, from: "01a0dead", fromNickname: "小黄", text }, reason });
+    const mk = (seq, reason, text) => ({ message: { seq, from: "01a0dead", fromNickname: "C", text }, reason });
     const denials = [];
     for (let i = 0; i < MAX_NAMED_DENIALS_PER_SWEEP + 5; i += 1) denials.push(mk(100 + i, "not-addressed", "chat"));
     for (let i = 0; i < 60; i += 1) denials.push(mk(300 + i, "control-frame", "[org:exec:result] x"));
-    for (let i = 0; i < 2; i += 1) denials.push(mk(500 + i, "machine-frame", "小捷升 0.1.45 自证"));
+    for (let i = 0; i < 2; i += 1) denials.push(mk(500 + i, "machine-frame", "A升 0.1.45 自证"));
     svc.logDenials(room.roomId, denials);
     const named = lines.filter((l) => l.includes("listening: denied seq="));
     const busLine = lines.filter((l) => l.includes("listening: denied 60 message(s)"));
@@ -845,7 +845,7 @@ guarded("0.1.45 runtime: the denial LOG stays bounded — chat denials are named
     const suppressed = lines.filter((l) => l.includes("listening: denied 5 more message(s)"));
     console.log(`  [logpolicy] lines=${lines.length} named=${named.length} agg60=${busLine.length} agg2=${frameLine.length} suppressed=${suppressed.length}`);
     assert.strictEqual(named.length, MAX_NAMED_DENIALS_PER_SWEEP, "chat denials are named per message, up to the cap");
-    assert.ok(named[0].includes("(rule=not-addressed, from=小黄/01a0dead)"), "a named denial carries the rule AND the author");
+    assert.ok(named[0].includes("(rule=not-addressed, from=C/01a0dead)"), "a named denial carries the rule AND the author");
     assert.strictEqual(busLine.length, 1, "60 control frames must be ONE aggregate line, not 60 (the 411 MB lesson)");
     assert.match(busLine[0], /seq=300\.\.359/, "and the aggregate must name the seq range it covers");
     assert.strictEqual(frameLine.length, 1, "machine frames aggregate the same way");

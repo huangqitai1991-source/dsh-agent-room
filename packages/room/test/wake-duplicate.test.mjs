@@ -69,8 +69,8 @@ const watermarkOf = (svc, roomId) => (svc.wakeWatermark ? svc.wakeWatermark.wate
 
 const PORT = 19571;
 const ROOM = "01a098a2-2015-7a1d-b5f7-9eca45afa65d"; // the production roomId
-const SELF = "01a0231b-bbe5-720a-97a4-819744eeae76"; // this node (KEVINKIKI)
-const REMOTE_HUMAN = "01a09483-3668-7bdf-9cc2-0180f314c8cf"; // 小婷
+const SELF = "01a0231b-bbe5-720a-97a4-819744eeae76"; // this node (*****)
+const REMOTE_HUMAN = "01a09483-3668-7bdf-9cc2-0180f314c8cf"; // D
 const SEQ = 315; // the production seq that woke 18 times
 
 let failures = 0;
@@ -136,7 +136,7 @@ async function teardown(svc) {
 async function seedHumanMessage(svc, roomId, text = "remote instruction") {
   return await svc.roomService.addChatMessage(
     roomId,
-    { agentId: REMOTE_HUMAN, nickname: "小婷", capabilities: [], createdAt: new Date().toISOString() },
+    { agentId: REMOTE_HUMAN, nickname: "D", capabilities: [], createdAt: new Date().toISOString() },
     { text, human: true },
   );
 }

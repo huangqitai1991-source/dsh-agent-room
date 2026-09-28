@@ -103,7 +103,7 @@ export function containsDirectory(root: string, candidate: string): boolean {
 /**
  * Can a session with this workspace run the shell tool at all? (0.1.49)
  *
- * MEASURED ON 小麦, 2026-09-15, first hand — the reason 0.1.48 still produced no output:
+ * MEASURED ON B, 2026-09-15, first hand — the reason 0.1.48 still produced no output:
  * every `pwsh` call in the session the plugin asked the host to create died BEFORE RUNNING with
  *   `Error: Windows ACL temp root must be outside the workspace:
  *    workspace=<home>; temp=<home>\AppData\Local\Temp`
@@ -197,7 +197,7 @@ interface AgentRegistryLike {
  * Which resolution path produced the resident agent (0.1.47).
  *
  * Before this existed, "why is this machine silent" had exactly one answer available:
- * read the diag lines by hand. 小黄's machine logged `active-session: … (global fallback,
+ * read the diag lines by hand. C's machine logged `active-session: … (global fallback,
  * … dir=false)` and `registry dump — detected=… list=[] roots=[]` and NOTHING else — the
  * machine was structurally unable to accept work, and that was visible only to somebody
  * grepping its log. The trace is what turns that into `/state.activation.resolvedViaNone`.
@@ -413,7 +413,7 @@ export class AgentRoomService extends Service {
    * `listeningRooms` used to be memory only, so every restart (upgrade, crash,
    * manual) silently dropped the intent and the machine stopped waking for room
    * messages — invisible, because the compensation lived in the upgrade script
-   * and was fail-soft (小麦 read `listening=false` after 0.1.40 while 主控 came
+   * and was fail-soft (B read `listening=false` after 0.1.40 while 主控 came
    * back listening; same script, two machines, different outcomes).
    *
    * The intent now lives on disk at the same granularity as joined.json (one
@@ -645,7 +645,7 @@ export class AgentRoomService extends Service {
    * candidates"). Feeding it here made every remote owner whose beacon we had
    * ever discovered look like "this machine", so `joinRoom` refused a legitimate
    * join with 不能通过本机自己的地址加入房间（self-join）: the node 主控 (own
-   * interfaces .204/Tailscale/MEmu only) was locked out of 小婷's room at
+   * interfaces .204/Tailscale/MEmu only) was locked out of D's room at
    * 192.168.31.82:9317 — the owner's address, taken straight from its beacon.
    *
    * The predicate must ONLY ever contain addresses that are unambiguously ours:
@@ -700,7 +700,7 @@ export class AgentRoomService extends Service {
    * 4. agents.list()[0] / agents.roots()[0] — first live / top-level agent.
    *
    * 0.1.47: every return ALSO fills in `trace`, because "which path resolved this machine's
-   * resident agent" is the difference between 小婷 (duty agent, works) and 小黄 (nothing
+   * resident agent" is the difference between D (duty agent, works) and C (nothing
    * resolved, structurally unable to accept work) — and before this version that difference
    * existed only inside this function's own diag lines.
    */
@@ -725,7 +725,7 @@ export class AgentRoomService extends Service {
     /**
      * 0.1.49: a candidate that CAN run a turn but whose workspace cannot run a SHELL.
      *
-     * Measured on 小麦: `started:1` was true and the transcript proved the turn really ran
+     * Measured on B: `started:1` was true and the transcript proved the turn really ran
      * (`turn/start`, reasoning, token usage) — and still nothing came out, because the prompt's
      * reply route (there is no `room_send` tool in a host-created session) is `pwsh`, and every
      * `pwsh` call in that workspace failed before running with
@@ -746,7 +746,7 @@ export class AgentRoomService extends Service {
           "resident-workspace-unsafe:" + (agent.id ?? agent.sessionId ?? "unknown"),
           `[agent-room] refusing to use ${agent.id ?? agent.sessionId ?? "unknown"} (via ${path}) as the resident agent: its workspace ` +
             `${unsafeWorkspace} contains the OS temp root (${tmpdir()}), so the sandboxed shell cannot start and the agent has no way to ` +
-            "post its reply — the turn would run and produce NOTHING (0.1.49; measured on 小麦)",
+            "post its reply — the turn would run and produce NOTHING (0.1.49; measured on B)",
         );
         if (trace) trace.workspaceUnsafe = unsafeWorkspace;
         if (!workspaceFallback) workspaceFallback = { path, agent, detail, workspace: unsafeWorkspace };
@@ -860,7 +860,7 @@ export class AgentRoomService extends Service {
     // 4. heuristic: session-* ids first, kanban task agents excluded
     let all: AgentLike[] = [];
     try { all = agents?.list?.() ?? []; } catch { /* ignore */ }
-    const candidates = all.filter((a) => typeof a.followup === "function" && !(a.id ?? a.sessionId ?? "").includes("herness-kanban-task-"));
+    const candidates = all.filter((a) => typeof a.followup === "function" && !(a.id ?? a.sessionId ?? "").includes("*****-task-"));
     const preferred = candidates.filter((a) => (a.id ?? a.sessionId ?? "").startsWith("session-"));
     const ordered = [...(preferred.length > 0 ? preferred : candidates)];
     for (const pick of ordered) {
@@ -1013,7 +1013,7 @@ export class AgentRoomService extends Service {
   /**
    * The host's default model selection AS IT EXISTS ON DISK (0.1.48, measured need).
    *
-   * WHY THIS TIER EXISTS: on a real machine (小麦, 2026-09-15) the plugin's `ctx` does NOT
+   * WHY THIS TIER EXISTS: on a real machine (B, 2026-09-15) the plugin's `ctx` does NOT
    * resolve the `agentDefaultModel` service — the field log said so verbatim
    * ("ctx.agentDefaultModel is absent") — so the in-process access path returned nothing and
    * the duty session was still spawned model-less. The SAME data is persisted by the settings
@@ -1098,7 +1098,7 @@ export class AgentRoomService extends Service {
   /**
    * Create a REAL session through the host's own session API (0.1.48, the last mile).
    *
-   * WHY THIS EXISTS (measured on 小麦, 2026-09-15): all four model sources can be empty at once
+   * WHY THIS EXISTS (measured on B, 2026-09-15): all four model sources can be empty at once
    * — no live session to mirror, nothing persisted, `<DSH_HOME>/settings.yaml` carrying no
    * `agent-default-model` section (52 bytes of `ui-onboarding` only), and `ctx.agentDefaultModel`
    * unreachable from the plugin. The duty session is then created model-less and can never run.
@@ -1133,7 +1133,7 @@ export class AgentRoomService extends Service {
     // throws), so EVERY shell call in the created session failed before running — and since a
     // host-created session carries no `room_send` tool, the shell IS the only way the agent can
     // post its reply. The turn started, consumed tokens, escalated for an approval nobody can
-    // answer, and produced nothing: 小麦's `started:1` + `acceptedNoOutput:1`, measured.
+    // answer, and produced nothing: B's `started:1` + `acceptedNoOutput:1`, measured.
     const workspace = resolveDutyWorkspace();
     if (workspace.rejected.length > 0) {
       this.warnRateLimited(
@@ -1654,7 +1654,7 @@ export class AgentRoomService extends Service {
    * (`dsh-agent-loop/lib/index.js:396`), it returns `undefined`, and `wakeDriver` returns
    * EARLY — doing nothing — whenever the agent is not idle (`:444`). So the only two facts
    * obtainable at this boundary are "it returned" and "it threw", and until 0.1.47 the
-   * second one was indistinguishable from the first for an operator: 小麦's log ends at
+   * second one was indistinguishable from the first for an operator: B's log ends at
    * `dispatching followup …` with no line after it, and there was no counter anywhere that
    * moved. This wrapper makes the boundary explicit: `accepted` (returned — which means the
    * message reached the agent's INBOX and nothing more) vs `refused` (threw — nothing was
@@ -1679,7 +1679,7 @@ export class AgentRoomService extends Service {
       agent.followup(createUserMessage({ content: [{ type: "text", text: prompt }], source: { kind: "plugin", plugin: "dsh-agent-room" } }));
     } catch (error) {
       this.activation.noteFollowupRefused(roomId, seq);
-      // Rate-limited by key, not suppressed: this is exactly the silent stop of 小麦.
+      // Rate-limited by key, not suppressed: this is exactly the silent stop of B.
       this.warnRateLimited(
         "followup-refused:" + roomId,
         `[agent-room] ${kind}: followup REFUSED for ${roomId} seq=${seq} agent=${agentId} (${String(error)}) — ` +
@@ -1759,7 +1759,7 @@ export class AgentRoomService extends Service {
     //     of "signal narrower than the claim" this release exists to end.
     //   - `[org:*]` control frames are bus traffic echoed into the room by our own node. THIS
     //     ONE IS NOT HYPOTHETICAL (D-37, measured): `own reply landed (seq=4436/4477/4420/4489)`
-    //     on 小黄 and 小婷 were ALL `[org:exec:result]` frames, and they are the reason two
+    //     on C and D were ALL `[org:exec:result]` frames, and they are the reason two
     //     machines with ZERO real messages were recorded as healthy. From 0.1.48 such frames
     //     are COUNTED (`activation.controlFramesIgnored`) and NAMED in one rate-limited line,
     //     so the misreading can never happen silently again.
@@ -1875,7 +1875,7 @@ export class AgentRoomService extends Service {
    *   * listening is what makes THIS machine wake its own agent, which is exactly
    *     what the room owner needs: the owner is the single point the whole room's
    *     instructions land on (D-11).
-   * The field consequence was measured the same night 0.1.43 shipped: 小婷, the room
+   * The field consequence was measured the same night 0.1.43 shipped: D, the room
    * OWNER, came back `listening=false` after every restart, because her
    * `listening.json` records the room she OWNS; only the upgrade script's helper step
    * re-opened her (`1 of 1 room(s) re-opened (listening=true); 0 were already on`),
@@ -1919,7 +1919,7 @@ export class AgentRoomService extends Service {
     if (!identity) return;
     for (const roomId of [...this.listeningRooms]) {
       if (this.listenPending.has(roomId)) {
-        // 0.1.45 (小捷's review, seq 3728 §4): this skip used to be invisible. A
+        // 0.1.45 (A's review, seq 3728 §4): this skip used to be invisible. A
         // message that arrives inside this window is not refused by the RULE — it is
         // never seen by the sweep — so it left no `denied` line and no counter.
         // Counting it (and saying so once per skip) is what makes "nothing woke me"
@@ -1943,7 +1943,7 @@ export class AgentRoomService extends Service {
           continue;
         }
         const fresh = recent.filter((m) => m.seq > seen);
-        // 0.1.45 (小黄's review, seq 3729): the read window is FINITE, so messages
+        // 0.1.45 (C's review, seq 3729): the read window is FINITE, so messages
         // that fall outside it are never candidates at all — neither woken nor
         // denied. Measured on this fleet: 152 control frames arrived in ~3 minutes
         // while an exec storm was running, i.e. the old 20-row window covered < 30 s,
@@ -1966,7 +1966,7 @@ export class AgentRoomService extends Service {
         if (fresh.length === 0) continue;
         // 0.1.45: the rule needs this node's OWN identity. There is deliberately NO
         // "author is the controller" input: the shipped rule has no author-based
-        // admission at all (see the header of src/host/wake.ts — 小捷's room seq 3728
+        // admission at all (see the header of src/host/wake.ts — A's room seq 3728
         // measured 24 wasted wakes/day for that clause, and "is this a dispatch"
         // cannot be inferred from who wrote it).
         const self: WakeRuleSelf = { agentId: identity.agentId, nickname: identity.nickname };
@@ -2101,7 +2101,7 @@ export class AgentRoomService extends Service {
    * observes a remote node's wake plane, so this is a prediction over THIS node's
    * room view (roster + `controllerAgentId` + each member's nickname). It is wrong
    * only for targets that are offline or have listening OFF. A delivered RECEIPT
-   * needs the ack plane, which 0.1.45 does not ship (小捷's option C, seq 3704 §Q6).
+   * needs the ack plane, which 0.1.45 does not ship (A's option C, seq 3704 §Q6).
    */
   private wakePreviewFor(
     roomId: string,
@@ -2198,10 +2198,10 @@ export class AgentRoomService extends Service {
     const agent = await this.resolveResidentAgent(identity, trace);
     if (!agent) {
       // ---------------------------------------------------------------------
-      // 0.1.47 — 小黄's failure, NAMED AND COUNTED.
+      // 0.1.47 — C's failure, NAMED AND COUNTED.
       //
       // This branch already logged one line in 0.1.45, and that line was not enough: on
-      // 小黄 the log said `active-session: session-7f81275b… (global fallback, … dir=false)`
+      // C the log said `active-session: session-7f81275b… (global fallback, … dir=false)`
       // and `registry dump — detected=session-7f81275b… list=[] roots=[]`, and NOTHING ELSE.
       // The machine was structurally unable to accept work, and the only way to know was to
       // read its log — while `/state` (the thing every sender actually polls) showed a
@@ -2325,7 +2325,7 @@ export class AgentRoomService extends Service {
         agent.followup(createUserMessage({ content: [{ type: "text", text: prompt }], source: { kind: "plugin", plugin: "dsh-agent-room" } }));
         accepted = true;
       } catch (error) {
-        // 小麦's silent stop, as a first-class outcome: the call threw, so NOTHING was
+        // B's silent stop, as a first-class outcome: the call threw, so NOTHING was
         // handed over — and that must never be indistinguishable from success.
         this.activation.noteFollowupRefused(roomId, message.seq);
         this.warnRateLimited(
@@ -2349,13 +2349,13 @@ export class AgentRoomService extends Service {
         } else if (trace.workspaceUnsafe) {
           // 0.1.49: the turn WILL run here and still produce nothing — the session's workspace
           // cannot host the sandboxed shell, and a host-created session carries no `room_send`
-          // tool, so the shell is the agent's only way to answer. Measured on 小麦: this exact
+          // tool, so the shell is the agent's only way to answer. Measured on B: this exact
           // state reported `started:1` and `acceptedNoOutput:1` for ever.
           this.warnRateLimited(
             "wake-workspace-unsafe:" + roomId,
             `[agent-room] listening: followup accepted — BUT THIS SESSION CANNOT BE HEARD FROM: seq=${message.seq} agent=${agentId} ` +
               `in ${roomId} has workspace ${trace.workspaceUnsafe}, which contains the OS temp root, so the sandboxed shell cannot start ` +
-              "(0.1.49; measured on 小麦). Expect activation.acceptedNoOutput, NOT an answer.",
+              "(0.1.49; measured on B). Expect activation.acceptedNoOutput, NOT an answer.",
           );
         } else {
           // 0.1.48: NEVER a success-shaped line for a session that cannot execute. Before this
@@ -2603,7 +2603,7 @@ export class AgentRoomService extends Service {
   /**
    * Do the equivalent of `activate-chat` for a wake that did not start a turn.
    *
-   * WHY THIS IS ALLOWED TO EXIST: the plugin already owns this code path — 小婷's own log
+   * WHY THIS IS ALLOWED TO EXIST: the plugin already owns this code path — D's own log
    * proves it works end to end (`active-session: session-b7496a19…` → `registry dump` →
    * `accepted … thinking=true` → `dispatching followup …` → `followup accepted` → a real
    * room message). A human clicking a button in the browser should not be the only way to
@@ -2684,7 +2684,7 @@ export class AgentRoomService extends Service {
       }
     } catch (error) {
       // A failed escalation is COUNTED, never silent — this branch is the whole point of the
-      // release: 小麦's log ended after `dispatching followup …` with nothing at all.
+      // release: B's log ended after `dispatching followup …` with nothing at all.
       this.activation.noteEscalationResult(false, "room-gone");
       this.warnRateLimited(
         "escalate-error:" + due.roomId,
@@ -3206,8 +3206,8 @@ export class AgentRoomService extends Service {
    * has already recorded `open`. Both handlers wrote the same Map entry, so the
    * last writer — the DEAD client — won:
    *
-   *   小黄 relay → lan:  bridge={kind:"relay",state:"closed",address:"ws://relay.example:9320"}
-   *   小麦 lan → relay:  bridge=direct/closed
+   *   C relay → lan:  bridge={kind:"relay",state:"closed",address:"ws://relay.example:9320"}
+   *   B lan → relay:  bridge=direct/closed
    *
    * while the channel was demonstrably alive on the other side of the same room
    * (`POST /chat` answered `confirmedByOwner:true, confirmedSeq:2518`). The record
@@ -3877,7 +3877,7 @@ export class AgentRoomService extends Service {
       // 0.1.42 (card ⑤ / D-19): the JOINED half of this used to read `connInfo`
       // alone, and `connInfo` accepted writes from RoomClients that had already
       // been replaced — so after a relay ⇄ lan switch it described the dead
-      // connection while the live one was healthy (小黄 relay→lan reported
+      // connection while the live one was healthy (C relay→lan reported
       // `relay/closed` at `ws://relay.example:9320` while `/chat` answered
       // `confirmedByOwner:true`). `joinedBridge()` derives the field from the
       // live client, and `recordConnInfo()` no longer lets a dead client write.
@@ -3947,11 +3947,11 @@ export class AgentRoomService extends Service {
       // short of. READ IT AS: `dispatches` → `accepted` → `started`/`startedBy*` → `outputs`
       // is the chain; the rest is what went wrong at which step:
       //   `noResidentAgent` + `resolvedViaNone` (every other `resolvedVia*` at 0)  ⇒ this
-      //        machine is STRUCTURALLY unable to accept work — 小黄's case, readable here.
+      //        machine is STRUCTURALLY unable to accept work — C's case, readable here.
       //   `followupRefused`                                                        ⇒ nothing was handed over.
       //   `escalationsAttempted/Succeeded/Failed`                                  ⇒ the self-activation.
       //   `acceptedNoOutput`                                                       ⇒ accepted, then silence
-      //        inside the window (小麦's "dispatching followup … and then nothing").
+      //        inside the window (B's "dispatching followup … and then nothing").
       activation: this.activation.stats(),
       // Bridge-truth diagnostics (0.1.42, card ⑤ / D-19). `connDrops` counts
       // status reports REFUSED because the reporting client had already been
@@ -4061,7 +4061,7 @@ export function buildListenPrompt(input: {
   lines.push(`你在房间「${input.title}」（roomId: ${input.roomId}）的监听中收到一条需要关注的消息（${kind}）。`);
   // F4 (2026-09-20): NEVER truncate without saying so. A truncated preview that looks
   // complete is how an agent answers half a sentence and then has to be corrected — the
-  // measured cost is a whole extra turn per occurrence (小黄 hit it 4 times on 2026-09-17;
+  // measured cost is a whole extra turn per occurrence (C hit it 4 times on 2026-09-17;
   // her own 665-char conclusion was cut in the tail she could not see). Every cut therefore
   // carries: the full length, the seq, and the one-line command that fetches the whole text.
   const MAIN_CAP = 500;

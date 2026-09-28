@@ -131,8 +131,8 @@ authorization call in updateNode: false
 
 ```
 === NEW-1: three stores BEFORE the rename ===
-  A identity.json      : KEVINKIKI
-  B owned-room member  : KEVINKIKI
+  A identity.json      : *****
+  B owned-room member  : *****
   C org node 516b10d7-890f-441c-8bef-420b39b5d467: 主控·总控
 
 === NEW-2: the missing entry point now exists (the OLD capture got 404) ===
@@ -140,7 +140,7 @@ authorization call in updateNode: false
 
 === NEW-3: one call through POST /agent-room-api/profile ===
   HTTP status                   : 200
-  response data                 : {"agentId":"01a0231b-bbe5-720a-97a4-819744eeae76","previousNickname":"KEVINKIKI","nickname":"主控·总控","changed":true,
+  response data                 : {"agentId":"01a0231b-bbe5-720a-97a4-819744eeae76","previousNickname":"*****","nickname":"主控·总控","changed":true,
                                    "identityFile":"…\\agent-room\\identity.json","profileFanout":0,"ownedRoomMembers":1,"nicknameConflicts":[],
                                    "org":{"attempted":true,"updated":true,"nodeId":"516b10d7-890f-441c-8bef-420b39b5d467","rev":4}}
   identities matched            : yes

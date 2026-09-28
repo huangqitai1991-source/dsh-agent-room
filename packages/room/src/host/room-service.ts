@@ -191,7 +191,7 @@ export class RoomService extends EventEmitter {
       if (room.ownerAgentId !== identity.agentId) continue;
       if (room.status === "suspended") room.status = "open";
       // Repair a room whose member list holds more than one record for one
-      // agentId (D-21). The field data is exactly this: 小捷 appeared twice with
+      // agentId (D-21). The field data is exactly this: A appeared twice with
       // joinedAt 2026-09-14T00:46:52.281Z and 2026-09-14T00:58:31.635Z, and an
       // old duplicate is never repaired by a later join — `admit` only ever
       // edited the FIRST match, so the stale copy stayed in every read view

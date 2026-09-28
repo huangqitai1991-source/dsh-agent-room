@@ -306,7 +306,7 @@ export function freezeDeclaration(profileDir) {
   // npm-type profile (measured: one machine's profile holds `package-lock.json`, 2,152 B) was restored
   // without its lockfile -- the declaration came back but the lock that describes it did not. A name
   // that is not there is simply frozen as `present:false` below, so listing both costs nothing.
-  // (Reported by 小婷, D-49h window W-D49h-1; deliberately NOT guessable further: yarn/bun lockfiles
+  // (Reported by D, D-49h window W-D49h-1; deliberately NOT guessable further: yarn/bun lockfiles
   // are not listed because no measured profile in this fleet uses them.)
   const names = ["package.json", "pnpm-lock.yaml", "package-lock.json"];
   const dir = mkdtempSync(join(tmpdir(), "profile-guard-frozen-"));
@@ -673,7 +673,7 @@ export function runProfileGuard(argv = [], io = console, { run = shellOut, now =
       // Through actionRecord, NOT pushed raw: a raw push carried `status` alone, so the successful
       // extraction (status 0) was the one row in the ledger with no `statusHex` / `statusSigned` /
       // `statusFamily` beside it -- and "0" without its family is exactly the kind of bare number this
-      // file exists to stop handing out. Reported by 小婷 from a real run (D-49h window W-D49h-1).
+      // file exists to stop handing out. Reported by D from a real run (D-49h window W-D49h-1).
       actions.push(actionRecord("tar extract", { status: ex.status, text: ex.text }, args.repairTimeoutMs, {
         name, tarball: dep.tarball, ok: ex.ok,
       }));

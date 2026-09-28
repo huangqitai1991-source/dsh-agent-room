@@ -9,7 +9,7 @@
  *  event to it. The only compensation lived in the upgrade script: an auto-wake
  *  helper that POSTs `{"on":true}` and FAILS SOFT. 主控's upgrade log printed
  *  `AUTO-WAKE: 2 of 2 room(s) re-opened (listening=true); 0 were already on` ✓,
- *  while 小麦 read `listening=false` after upgrading to 0.1.40
+ *  while B read `listening=false` after upgrading to 0.1.40
  *  (`room=0.1.40 org=0.2.12 relay=off joined=YES listening=false bridge=direct/open`)
  *  and had to be rescued through an external exec ✗. A machine silenced this way
  *  never complains — it simply stops receiving room instructions.
@@ -404,7 +404,7 @@ guarded("an OWNED room that was listening comes back listening with NO script (0
   try {
     // The REAL route, driven on the OWNER's own room: nothing in the route or in the
     // browser refuses an owned room (measured: client.js renders the 监听 toggle for
-    // every room), so this is the state 小婷 was in when she came back muted.
+    // every room), so this is the state D was in when she came back muted.
     await withApi(owner.svc, async (api) => {
       const res = await api.post(room.roomId, true);
       assert.strictEqual(res.status, 200, `POST /listening on an OWNED room must answer 200, got ${res.status}`);

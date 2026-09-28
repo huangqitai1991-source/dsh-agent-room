@@ -1,7 +1,7 @@
 /**
  * dsh-agent-room 0.1.50 -- the SYMBOL-LEVEL ANCHOR GATE, and the one command that composes it.
  *
- * SPECIFICATION BY 小黄 (agentId 01a094c1-..., macOS, @deepseek-ai/dsh 0.1.1-rc.2), derived from
+ * SPECIFICATION BY C (agentId 01a094c1-..., macOS, @deepseek-ai/dsh 0.1.1-rc.2), derived from
  * boyin111-1/dsh-doctor's `ANCHOR_BASELINE_VERSION` / `ANCHORS[]` / `checkAnchorBaseline()` /
  * `--verify-anchors`. The four hard requirements below are acceptance, not suggestions:
  *

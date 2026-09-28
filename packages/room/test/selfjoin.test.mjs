@@ -16,7 +16,7 @@
  *
  *   {"ok":false,"error":"不能通过本机自己的地址加入房间（self-join）: 192.168.31.82:9317"}
  *
- * …where 192.168.31.82:9317 is the OWNER (小婷), advertised by its own beacon,
+ * …where 192.168.31.82:9317 is the OWNER (D), advertised by its own beacon,
  * while the caller's interfaces were only 100.64.44.107 / 172.19.208.1 /
  * 192.168.137.1 / 192.168.31.204 / 127.0.0.1. The member was locked out of the
  * room: it could not read messages and its sends failed with 房间不存在.
@@ -112,7 +112,7 @@ guarded("joining the room OWNER by its beacon address succeeds even with a local
   const orphans = [];
   let svc = null;
   try {
-    // ---- the remote OWNER (小婷): an ordinary node serving the room ----
+    // ---- the remote OWNER (D): an ordinary node serving the room ----
     const ownerService = new RoomService({ dataDir: await mk("owner") });
     await ownerService.boot();
     const ownerServer = new PeerServer({ port: OWNER_PORT, service: ownerService, relay: "" });

@@ -5,7 +5,7 @@
  * WHY THIS EXISTS (measured on this fleet, 2026-09-15, the day 0.1.45 shipped)
  *
  * 0.1.45 fixed the wake plane: a script message (`human=false`) that NAMES a node now
- * wakes it. That works — verified on 小黄, 小捷, 小婷 and 小麦, whose own logs show
+ * wakes it. That works — verified on C, A, D and B, whose own logs show
  * `listening: woken seq=… rule=mention`. **And that is exactly where the evidence
  * stopped.**
  *
@@ -105,7 +105,7 @@ export const ACK_RECEIPT_MAX_CHARS = 160;
  * The receipt line. ONE line, no prose, naming THIS machine's own nickname, the seq it
  * acknowledges, and that it has started handling it.
  *
- * `[ack] 小捷 已接手 seq=4405`
+ * `[ack] A 已接手 seq=4405`
  *
  * No `@` anywhere, deliberately: an `@nickname` here would make every receipt a fresh
  * mention of a colleague on four machines — a wake storm manufactured by the very
@@ -121,7 +121,7 @@ export function formatAckReceipt(input: { nickname?: string; agentId?: string; s
  * machine produced no receipt inside `ACK_WINDOW_MS`. Rate-limited by the caller: one
  * per `(roomId, seq)`, once.
  *
- * `[ack-miss] seq=4405 未回执：小麦 小黄 (waited 120s)`
+ * `[ack-miss] seq=4405 未回执：B C (waited 120s)`
  *
  * Same reasoning as the receipt: no `@`, one line, machine frame — it must be visible
  * without waking anybody.

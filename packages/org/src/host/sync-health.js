@@ -31,15 +31,15 @@ export function createSyncHealth() {
     lastInboundAt: null,
     lastInboundFrom: null,
     // 0.2.14: the PEER view, kept apart from "whoever wrote last".
-    // Measured 2026-09-20 on 小捷 over 120 snapshots: `lastInboundFrom` read as
+    // Measured 2026-09-20 on A over 120 snapshots: `lastInboundFrom` read as
     // "self" in 43 of them (35.8%, longest run 32 samples ≈ 160 s), because it is
     // last-writer-wins across every writer including this node. A single read of
     // that field therefore cannot answer "did a peer just write" — these fields can.
     lastPeerInboundAt: null,
     lastPeerFrom: null,
-    // 0.2.14 (spec input from 小捷, measured): a SINGLE scalar still gets
-    // overwritten across peers — three writers touched its window (KEVINKIKI 29,
-    // itself 43, 小婷 48), so "小婷 wrote a second ago" would make the scalar read
+    // 0.2.14 (spec input from A, measured): a SINGLE scalar still gets
+    // overwritten across peers — three writers touched its window (***** 29,
+    // itself 43, D 48), so "D wrote a second ago" would make the scalar read
     // "fresh" for a peer that has been silent for hours. The map is the primary
     // record; `lastPeerInboundAt`/`lastPeerFrom` are derived from it.
     lastInboundByPeer: {},
@@ -115,7 +115,7 @@ export function noteInbound(h, at, message = {}, opts = {}) {
  *
  * POSITIVE EVIDENCE ONLY, and only from the authority. Quiet is normal, not
  * broken: measured on this fleet 2026-09-20, the gap between org frames reached
- * 2.5 days and 小捷's own tree sat frozen for 2 days with nothing wrong — so
+ * 2.5 days and A's own tree sat frozen for 2 days with nothing wrong — so
  * "no peer frame for N minutes" must NOT be read as staleness. This returns:
  *   stale   — the AUTHORITY announced a snapshot NEWER than the local tree;
  *   fresh   — the authority announced one the local tree already covers;
@@ -172,7 +172,7 @@ export function syncHealthView(h) {
     lastPeerInboundAt: h.lastPeerInboundAt,
     lastPeerFrom: h.lastPeerFrom,
     // per-peer view: lets a monitor judge "is THIS colleague reachable" without
-    // continuous sampling (0.2.14 spec input from 小捷)
+    // continuous sampling (0.2.14 spec input from A)
     lastInboundByPeer: { ...(h.lastInboundByPeer ?? {}) },
     lastPeerSnapshotAt: h.lastPeerSnapshotAt,
     lastPeerSnapshotRev: h.lastPeerSnapshotRev,

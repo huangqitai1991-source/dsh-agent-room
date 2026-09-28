@@ -15,7 +15,7 @@ test("snapshot round-trips with by + ownerAgentId", () => {
 });
 
 test("owner snapshot wins over non-owner local tree at equal rev", () => {
-  // 小捷 (member) has rev=0; owner broadcasts rev=0 -> member adopts owner's.
+  // A (member) has rev=0; owner broadcasts rev=0 -> member adopts owner's.
   const local = tree(0);
   const incoming = { ...tree(0), by: owner, ownerAgentId: owner };
   assert.strictEqual(shouldApply(local, incoming, member), true);

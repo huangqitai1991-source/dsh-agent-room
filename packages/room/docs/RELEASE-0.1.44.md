@@ -21,12 +21,12 @@
 源码 `src/host/service.ts:944`），理由是「自有房间由本机提供，监听没有意义」——
 而这是错的：浏览器**对自有房间也提供 监听 开关**（`lib/client.js` 的 `onToggleListening`，
 路由 `POST /agent-room-api/rooms/<id>/listening` 对自有房间同样接受），
-而房主正是全房指令唯一落点（D-11）。现场后果：房主 小婷 的 `listening.json` 记的**就是她拥有的那个房间**，
+而房主正是全房指令唯一落点（D-11）。现场后果：房主 D 的 `listening.json` 记的**就是她拥有的那个房间**，
 所以**每次启动都被跳过**，只能靠升级脚本的 helper 当晚临时帮她打开（
 `1 of 1 room(s) re-opened (listening=true); 0 were already on`）——**插件自己一个都没恢复**。
 
 **首次升级无据可恢复**：这个意图文件**只有显式 `setListening()` → `persistListening()` 会写**。
-0.1.40 从不写它，所以小黄（macOS）升上 0.1.43 之后 `~/.dsh/agent-room/listening.json` **不存在**，
+0.1.40 从不写它，所以C（macOS）升上 0.1.43 之后 `~/.dsh/agent-room/listening.json` **不存在**，
 helper 又在一个空房间列表上赛跑（`rooms after upgrade: 0`、`AUTO-WAKE: already on (0 rooms)`）⇒ 升级后直接变哑。
 
 ## 2. 修复后的语义（本版契约）
@@ -149,7 +149,7 @@ PS> node <workdir>\_test-listening-capture-0144.cjs # SUITE listening-capture: 4
 
 第一版生成器用 `String.replace(anchor, block + anchor)` 插入 1c 步骤 ⇒ **第二次运行时把这一步**（以及
 「Stop dsh web」这个锚点）**匹配两次**，结果是：`upgrade-studio.ps1` 里出现**两个** 1c，
-现场小婷那一轮 `upg.out.log` 里就有**两段**
+现场D那一轮 `upg.out.log` 里就有**两段**
 `=== [1c] Persist the listening intent BEFORE the swap (0.1.44 / D-28) ===`
 （33 行日志里出现 2 次），并且第二个锚点把 9c 的 helper 卡在旧修订上（`--before-file` 没生效）。
 处置：生成器改为**先剥离已插入块、再插一次**（`stripInserted` + 只在**最后一个**锚点前插入），
@@ -193,7 +193,7 @@ PS> node <workdir>\_test-listening-capture-0144.cjs # SUITE listening-capture: 4
 
 ## 7. 真机现场验证（本版唯一与 0.1.43 不同的地方：这一版**真的上过机器**）
 
-### 7.1 小黄（macOS，**成员机**）二次重启 — D-27 判据
+### 7.1 C（macOS，**成员机**）二次重启 — D-27 判据
 
 任务前状态：0.1.43、意图文件**已存在**（`{"rooms":["01a098a2-..."]}`）、`listening=true`。
 动作：`launchctl submit` 起一个独立于 exec 作业的小脚本，杀掉 3080 的 LISTEN 进程（`lsof -ti tcp:3080 -sTCP:LISTEN`），
@@ -216,11 +216,11 @@ VERDICT=RESTORED_BY_ITSELF
 > `launchctl submit`，而它把同一份 restart 脚本**反复拉起**（`launchctl remove` 之前共有 7 轮，
 > 每轮间隔约 25 s），直到 00:47:12 我把它 remove 掉才停。每一次都是
 > `listening=true` / `VERDICT=RESTORED_BY_ITSELF`，**不是**要往验证结论里加分量，
-> 而是：**这是我造成的一次可观测的资源浪费，必须写在这里**。恢复后小黄服务正常（PID 41789、3080 正常、relay/open）。
+> 而是：**这是我造成的一次可观测的资源浪费，必须写在这里**。恢复后C服务正常（PID 41789、3080 正常、relay/open）。
 > 同时它把 D-30 那条口径补实了：nohup + `&` 的 detached 子进程会被 exec 作业一起杀掉
 > （`ticker.log` 在 8×5 s 轮询里**从未出现**），要真独立必须像 `launchctl` 这样脱离进程树。
 
-### 7.2 小婷（Windows，**房主**）— 升级到 0.1.44 + 重启后是否**无人帮助**自行恢复
+### 7.2 D（Windows，**房主**）— 升级到 0.1.44 + 重启后是否**无人帮助**自行恢复
 
 **第一轮（脚本被重复插入步骤的版本）——现场失败，原样记录：**
 
@@ -287,7 +287,7 @@ AUTO-WAKE lines in upg.out.log: (none)
 本轮 log 里 `supervisor refusals before/after = 1/2` 也说明她的 supervisor 环境本来就有一次既有拒绝。
 **但它让"升级成功"这句话变弱了**——见 §10.3。
 
-### 7.2b 小婷（Windows，**房主**）— 正式验收：一次已公告的重启，**无人帮助**自行恢复 ✓
+### 7.2b D（Windows，**房主**）— 正式验收：一次已公告的重启，**无人帮助**自行恢复 ✓
 
 前面 §7.2 那两轮是**升级**的两轮。为了让"自有房间恢复"这条有一个**干净、单一变量**的验收，
 在 0.1.44 已经装好、`listening=true` 之后，我又做了**一次**重启（这是本节的验收动作，也是交办要求的"ONE restart"）：
@@ -328,10 +328,10 @@ VERDICT=RESTORED_BY_ITSELF
 ⇒ **D-28 的"自有房间恢复"在房主真机上验收通过 ✓**。房间公告：重启前 seq 3225（11:06 本地），
 结果 seq 3231（`confirmedByOwner:true`）；不可用约 8 秒。
 
-### 7.3 小捷（Windows，**成员机**）— 证据已**作废**（机器归属变更，如实留档）
+### 7.3 A（Windows，**成员机**）— 证据已**作废**（机器归属变更，如实留档）
 
 **2026-09-15 10:1x：本条证据作废 ✗，不作为本版的验收依据。**
-起因：小捷的 **0.1.43 步骤与它当前的 `listening=false` 已归属于另一个 worker**，
+起因：A的 **0.1.43 步骤与它当前的 `listening=false` 已归属于另一个 worker**，
 本版发布者**不再驱动这台机器**（不得重启、不得升级、不得 POST listening）。
 我在 09:08–09:12 对它做过的一轮升级与意图文件改名，因此**落在了另一个 worker 正在负责的机器上** ——
 这是我的越界操作，不能拿它当本版的证据。
@@ -349,8 +349,8 @@ VERDICT=RESTORED_BY_ITSELF
 **D-28 第二半（首次升级自举）的真机证据因此回到"未验证"** ✗：
 本版只有 stub 级与静态级证据（§5.2、`_test-listening-capture-0144.cjs` 用例 A/B、
 两侧 helper 逐字节相同 + 1c 恰好一次 + 位置断言）。
-真正的合格样本是"跑着旧版本且没有意图文件"的机器；按现在的口径那是**小麦**，而它**不由我动**。
-补救路径（已写进口径）：等小捷回到本版发布者手里、且**停在某个版本**时，
+真正的合格样本是"跑着旧版本且没有意图文件"的机器；按现在的口径那是**B**，而它**不由我动**。
+补救路径（已写进口径）：等A回到本版发布者手里、且**停在某个版本**时，
 在它的 **0.1.44 这一步**做自举复测（届时我不再需要改名意图文件 —— 直接看 1c 是否把当时的监听状态落盘）。
 
 ### 7.3-old 我当时的记录（保留原文，仅作留档，结论已作废）
@@ -382,9 +382,9 @@ LISTENING-CAPTURE: listening intent written to <home>\.dsh\agent-room\listening.
 
 ⇒ **步骤 1c 在换包前把"运行中的监听意图"补出来了（就在我挪走文件之后），而紧随其后的那次 boot 照它恢复** ✓。
 这是 **D-28 第二半（首次升级无据可恢复）的第一个真机证据**：合格样本是"跑着旧版本且没有意图文件"的机器，
-车队里只有小麦，而它被 D-29 封着。
+车队里只有B，而它被 D-29 封着。
 
-**它跳过的两步我补跑了**（同小婷的原因：脚本在第 8 步 watchdog 锁 `ALREADY-RUNNING pid=8728` 上 exit 1，9b/9c 不会执行）：
+**它跳过的两步我补跑了**（同D的原因：脚本在第 8 步 watchdog 锁 `ALREADY-RUNNING pid=8728` 上 exit 1，9b/9c 不会执行）：
 
 ```
 $ node C:\studio\auto-wake.cjs --base http://127.0.0.1:3080 ... --before-file C:\studio\before-listening.json
@@ -400,7 +400,7 @@ AUTO_WAKE_EXIT=0
 
 **D-18 观察（如实说明：没有新证据）**：它那 2 个房间**都不是死房间** ——
 `K family`：`status=open latestSeq=3148 sync={lag:0,converged:true,connected:true} members=5 listening=true`；
-`小捷测试专用房间`：`status=open latestSeq=15 sync={lag:0,converged:true,connected:true} members=2`（只是安静）。
+`A测试专用房间`：`status=open latestSeq=15 sync={lag:0,converged:true,connected:true} members=2`（只是安静）。
 `joined.json` 恰好 2 条、都在中继地址上；`joined.json.bak-20260910165010` 里那 4 条旧记录**早就不在当前 joined 里**
 （历史已收敛）。本轮**没有**死房间入会、也没有运行中被拒可观测 ⇒ **这一台没有给 D-18 提供新证据**。
 按要求**没有手工删除任何记录**。
@@ -409,27 +409,27 @@ AUTO_WAKE_EXIT=0
 
 | 机器 | 平台 | 推送前 | 结果 | 是否本版推的 | 3080 owner | listening | chat 自测 | 1c | 9c |
 |---|---|---|---|---|---|---|---|---|---|
-| 小婷 | Windows | 0.1.44 | **0.1.44** | 本版（早先） | `13764 → 15904` | true（无人帮助 ✓） | `confirmedByOwner:true` | 1 | 0（skip） |
-| 小麦 | Windows | 0.1.43 | **0.1.44** | **本版（本次）** | `3928 → 16900` | true ✓ | `confirmedByOwner:true`（seq 3511） | 1 | 0（skip） |
-| 小捷 | Windows | 0.1.44 | **0.1.44** | **不是本版**（另一路先推的） | `3640 → 12472` | true ✓ | `confirmedByOwner:true`（seq 3500） | 1 | 0（skip） |
-| 小黄 | macOS | 0.1.43 | **0.1.44** | **不是本版**（另一路先推的） | `47413`（ppid=1） | true ✓ | `confirmedByOwner:true`（seq 3491） | 未取证 | 未取证 |
+| D | Windows | 0.1.44 | **0.1.44** | 本版（早先） | `13764 → 15904` | true（无人帮助 ✓） | `confirmedByOwner:true` | 1 | 0（skip） |
+| B | Windows | 0.1.43 | **0.1.44** | **本版（本次）** | `3928 → 16900` | true ✓ | `confirmedByOwner:true`（seq 3511） | 1 | 0（skip） |
+| A | Windows | 0.1.44 | **0.1.44** | **不是本版**（另一路先推的） | `3640 → 12472` | true ✓ | `confirmedByOwner:true`（seq 3500） | 1 | 0（skip） |
+| C | macOS | 0.1.43 | **0.1.44** | **不是本版**（另一路先推的） | `47413`（ppid=1） | true ✓ | `confirmedByOwner:true`（seq 3491） | 未取证 | 未取证 |
 | 主控（本机） | Windows | — | 未动（硬约束） | — | — | — | — | — | — |
 
-**只有小麦这一台是本版推的**；其余三台在我动手前**已被另一路推到 0.1.44**（小捷 09:10、小黄 09:48、小婷早先）。
+**只有B这一台是本版推的**；其余三台在我动手前**已被另一路推到 0.1.44**（A 09:10、C 09:48、D早先）。
 所以我**没有对它们再跑升级**（重跑会把"无人帮助恢复"这个测量抹掉 ✗），只做了只读验收。
 **每一台都没有出现过 AUTO-WAKE 救援行**，`listening` 全部是插件自己 boot 恢复的 ✓。
 
-**小麦的推送方式**（D-29/D-32 口径下的实际可用路径，实测）：`wmic process call create` 让 **WMI 创建 node**
+**B的推送方式**（D-29/D-32 口径下的实际可用路径，实测）：`wmic process call create` 让 **WMI 创建 node**
 （返回 `ReturnValue = 0`，`ProcessId = 18620`）→ 该 node 再 `spawnSync` 一个**分离的** PowerShell 跑升级脚本
 （`upg.pid.txt` = 2884）→ 本机 exec 作业被硬杀**不影响它** ✓。
 **两次失败教训**（都记在这里，不重复踩）：① WMI 直接创建 `powershell.exe` **完全没跑**（无日志、无重启、无报错）；
 ② `wmic process call create <exe> <script>` 传**多个 argv** 会被吞成「无效的语法」（status 47054），必须传**一条带引号的命令串**。
 
-**未取证的部分（如实写）**：小黄那台的 `upgrade-studio.sh` **已不在 `~/studio`**，
+**未取证的部分（如实写）**：C那台的 `upgrade-studio.sh` **已不在 `~/studio`**，
 所以我**无法证明**它的升级是走 macOS 侧脚本跑的，也就**没有拿到 `.sh` 在 macOS 上执行过的证据** ✗ ——
 §10 第 5 条（`.sh` 改动只在 macOS 静态等价、未真跑）**依然成立**。
 
-**本版推的小麦同样命中 D-33**：`[1c]` 跑了、`LISTENING-CAPTURE` 两行都在，
+**本版推的B同样命中 D-33**：`[1c]` 跑了、`LISTENING-CAPTURE` 两行都在，
 但 `[9] b/9` / `[9] c/9` / `=== DONE ===` 全部 0 次、`upg.err.log` **0 字节**，而升级本身是成功的
 （0.1.44 / 真重启 / listening=true / chat 自测通过）⇒ 「升级成功却 exit 1 且跳过自校验」在三台 Windows 上一致复现，已立 **D-33**。
 
@@ -438,18 +438,18 @@ AUTO_WAKE_EXIT=0
 - **没有手工修 `listening` 再测**（第二轮测量前，我先把上一轮失败留下的 `false` 用
   `POST /listening {on:true}` 恢复到 `true`，**然后**才开跑；进入测量时状态是 `true`，
   所以"重启后还是不是 true"是干净的判据）。
-- **没有循环重启**：小婷只做了**两次**升级/重启（第一轮失败的诊断 + 第二轮验收），每次都在房间里先发通知
+- **没有循环重启**：D只做了**两次**升级/重启（第一轮失败的诊断 + 第二轮验收），每次都在房间里先发通知
   （seq 2942 / 3089）并在结束后发结果（seq 3148，`confirmedByOwner:true`）；
-  小捷**一次**升级/重启（结果 seq 3199）。小黄的多轮重启见 §7.1 的如实说明。
-- **没有碰小麦**（D-29：它那台 `powershell.exe` 从 exec 平面与计划任务两头被拒，需要人在交互控制台里跑；
+  A**一次**升级/重启（结果 seq 3199）。C的多轮重启见 §7.1 的如实说明。
+- **没有碰B**（D-29：它那台 `powershell.exe` 从 exec 平面与计划任务两头被拒，需要人在交互控制台里跑；
   本会话**没有**做任何绕过尝试）。
-- **【事后更正】** 我**动过小捷**（0.1.44 升级 + 意图文件改名 + 手工补跑 9b/9c），
+- **【事后更正】** 我**动过A**（0.1.44 升级 + 意图文件改名 + 手工补跑 9b/9c），
   而它随后被划归另一个 worker 负责 0.1.43 步骤 ⇒ **那台机器上的操作属越界**，证据已作废（§7.3）。
   纪律：**在多 worker 同时作业的夜里，"这台机器属于谁"必须在动手前确认**，
   而当时的交办明确把这台划给了我 —— 冲突本身要在**交办层**解决，动手方要保留"何时接到归属变更"的时刻。
   那台机器上我**没有**做过任何 kill、没有重启过服务、也没有删除任何文件（意图文件是**改名**，旧字节在盘上）。
 - **没有重启本机服务**（硬约束）。
-- **没有手工删除任何房间记录 / 意图文件**（小捷的意图文件是**改名**备份，旧字节仍在盘上）。
+- **没有手工删除任何房间记录 / 意图文件**（A的意图文件是**改名**备份，旧字节仍在盘上）。
 
 ## 8. 交付物与复现入口
 
@@ -471,9 +471,9 @@ powershell -File <workdir>\_fix-d28\run-suites-0144.ps1   # 日志 <workdir>\_fi
 node <workdir>\\...\dsh-agent-room\test\_repro-d28-owner-boot.mjs
 
 # 三台真机的现场脚本（原始输出一律落在 <workdir>\_fix-d28\）
-node <workdir>\_fix-d28\test1-xiaohuang.mjs  --phase=measure      # 小黄（macOS，成员）
-node <workdir>\_fix-d28\test2-xiaoting.mjs   --phase=read         # 小婷（Windows，房主）
-node <workdir>\_fix-d28\test3-xiaojie.mjs    --phase=read         # 小捷（Windows，成员，自举样本）
+node <workdir>\_fix-d28\test1-xiaohuang.mjs  --phase=measure      # C（macOS，成员）
+node <workdir>\_fix-d28\test2-xiaoting.mjs   --phase=read         # D（Windows，房主）
+node <workdir>\_fix-d28\test3-xiaojie.mjs    --phase=read         # A（Windows，成员，自举样本）
 node <workdir>\_fix-d28\test3-verify.mjs     --phase=autowake     # 9c 自检步逐字补跑
 ```
 
@@ -521,13 +521,13 @@ node "$repo\build.mjs"
 只是在自有房间上会继续跳过）；② 各机 `$Work` 下的 `before-listening.json` / `listening-capture.cjs` / `auto-wake.cjs`
 会留在磁盘上（无人读，无害）。
 
-## 11. 小麦（kiki）人工收尾说明（给坐到那台机器前的人，一段就够）
+## 11. B（kiki）人工收尾说明（给坐到那台机器前的人，一段就够）
 
-**先说结论：2026-09-15 10:17 那次升级**已经把 小麦 推到了 **0.1.44**（`org 0.2.12`、`listening=true`、relay 已配置、
+**先说结论：2026-09-15 10:17 那次升级**已经把 B 推到了 **0.1.44**（`org 0.2.12`、`listening=true`、relay 已配置、
 chat 自测 `confirmedByOwner:true`）。所以下面这段**不是"必须做的事"**，而是「如果它需要再升一次/要复核」时的标准动作。
 
 ```powershell
-# —— 小麦 kiki：0.1.44 升级 / 复核（工作目录是 C:\studio）——
+# —— B kiki：0.1.44 升级 / 复核（工作目录是 C:\studio）——
 # 0) 先看现在是什么版本（已经 0.1.44 就不必再跑升级）
 (Get-Content <home>\.dsh\profiles\web\node_modules\dsh-agent-room\package.json -Raw | ConvertFrom-Json).version
 
@@ -578,32 +578,32 @@ node C:\studio\auto-wake.cjs --base http://127.0.0.1:3080 --timeout-ms 5000 --re
    **能确定的**：在她**现在的**代码与数据上，恢复路径两条都成立（§7.2 的 boot 复现），
    且第二轮是**无人帮助**回来的。
 2. **两台 Windows 机器的升级脚本都自身以 exit 1 收场**（第 8 步 watchdog 锁 `ALREADY-RUNNING`：
-   小婷 `pid=17312`、小捷 `pid=8728`），所以 9c 的自检步、9b 的 served-bundle 校验**默认不会执行**——
-   在小婷那台它还是"无人帮助"的证明，但更普遍地它意味着**升级脚本的完整成功路径在两台机器上都没走完**，
+   D `pid=17312`、A `pid=8728`），所以 9c 的自检步、9b 的 served-bundle 校验**默认不会执行**——
+   在D那台它还是"无人帮助"的证明，但更普遍地它意味着**升级脚本的完整成功路径在两台机器上都没走完**，
    我是**手工**把 9b/9c 补跑出来的（§7.3）。锁的持有者是**旧 cmd 包装进程**，不是 dsh 本身；
    清锁属于"重启动作"，本轮没有做（D-31 纪律：动进程前先确认身份与看门狗）。
-3. **1c 的"首次升级自举"在真机上【未验证】**（小捷那一轮的证据已作废，见 §7.3：那台机器在 0.1.43 步骤上
+3. **1c 的"首次升级自举"在真机上【未验证】**（A那一轮的证据已作废，见 §7.3：那台机器在 0.1.43 步骤上
    已归属另一个 worker，我不该动它）。现有证据只有 stub 级与静态级：helper 对任意 `state` 形状的行为
    （`_test-listening-capture-0144.cjs` 用例 A/B）、两个平台内嵌 helper 逐字节相同、1c 恰好一次、1c 位于
    "Stop dsh web / Install" 之前、9c 真的传了 `--before-file`。**合格样本**是"跑着旧版本且磁盘上没有意图文件"的机器
-   —— 按现在的口径那是小麦，而它不由本版发布者动。**特别是"0.1.40 的 `/state` 是否带 `listening` 字段"从未在真机验证过** ✗，
+   —— 按现在的口径那是B，而它不由本版发布者动。**特别是"0.1.40 的 `/state` 是否带 `listening` 字段"从未在真机验证过** ✗，
    这一条不成立的话，1c 在 0.1.40 上会捕获到空集合（会打印 `NO room is listening ...` 而不是撒谎，但不能算自举成功）。
-4. **`listening-capture.cjs` 的 CLI 入口在小捷上是脚本内嵌版跑的**（步骤 1c 本身就是 CLI 调用，`exit 0` + 写出两个文件）；
+4. **`listening-capture.cjs` 的 CLI 入口在A上是脚本内嵌版跑的**（步骤 1c 本身就是 CLI 调用，`exit 0` + 写出两个文件）；
    但**独立文件**那份只在本机 PowerShell 里直跑验过（`<workdir>\_fix-d28\cli-capture.txt` / `cli-autowake.txt`）。
    本会话沙箱**禁止** Node 子进程用管道 stdio（实测 `spawnSync` → `EPERM`），
    所以套件内的 CLI 断言被改成"导出面"断言，并在用例 J 里写明原因。
-5. **macOS 那一侧的升级脚本改动没在 macOS 上跑过**：小黄这台**没有升级**（只做了裸重启，且据交办它那一轮的
+5. **macOS 那一侧的升级脚本改动没在 macOS 上跑过**：C这台**没有升级**（只做了裸重启，且据交办它那一轮的
    二次重启验证已由另一路完成 ⇒ 我**不再重启它**）。`.sh` 的 1c/9c 目前只有**静态等价性**证据
    （两侧 helper 逐字节相同 + 位置断言 + node 语法解析）。
 6. **`launchctl submit` 的反复拉起**（§7.1）说明我对 macOS 守护机制的判断错过一次：它把同一份 restart 脚本
    **反复**拉起（我 `launchctl remove` 之前共 7 轮）。教训与 D-31 同源：**动进程/定时任务之前，先确认它只跑一次**。
 7. **车队状态在我作业期间又被别人改动过（如实记录，不影响本版结论）**：
-   我验收小婷时读到 **小黄已经是 `room=0.1.44 listening=true`**（交办/复核时它还是 0.1.43），
-   即那台也被另一路升到 0.1.44 了 —— 与小捷被划归另一 worker 是同一类情况：
+   我验收D时读到 **C已经是 `room=0.1.44 listening=true`**（交办/复核时它还是 0.1.43），
+   即那台也被另一路升到 0.1.44 了 —— 与A被划归另一 worker 是同一类情况：
    **多 worker 同时作业时，"机器当前版本"是个会变的量**，任何写进文档的读数都必须带时刻。
-   （成员侧"卡⑥ 成立"的结论不依赖具体版本：小黄在 0.1.43 上就已自证，0.1.44 只会更成立。）
-8. **车队仍未全覆盖**：小麦（D-29，需人在交互控制台里跑，非我可动）、以及本机（硬约束不许重启自己）。
-   有效样本是 3 台：小黄（成员，重启自证）、小婷（房主，**0.1.44 一次已公告重启、无人帮助恢复 ⇒ 验收通过**）、
-   小捷（成员，我的一轮**已作废**）。**"车队所有机器都升到 0.1.44 之后行为一致"仍未被完整证明**。
+   （成员侧"卡⑥ 成立"的结论不依赖具体版本：C在 0.1.43 上就已自证，0.1.44 只会更成立。）
+8. **车队仍未全覆盖**：B（D-29，需人在交互控制台里跑，非我可动）、以及本机（硬约束不许重启自己）。
+   有效样本是 3 台：C（成员，重启自证）、D（房主，**0.1.44 一次已公告重启、无人帮助恢复 ⇒ 验收通过**）、
+   A（成员，我的一轮**已作废**）。**"车队所有机器都升到 0.1.44 之后行为一致"仍未被完整证明**。
 9. **没有做跨仓联合验证**：本版一行未动 `dsh-agent-org`（车队保持 0.2.12），
    但也没有跑过"房间 + org 同时升级"的端到端场景。

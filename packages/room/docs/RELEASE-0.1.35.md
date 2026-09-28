@@ -13,7 +13,7 @@ Measured on live machines that day:
 
 | where | what the room looked like |
 | --- | --- |
-| owner's store (小婷's node) | `total=200`, `orgFrames=144`, `maxSeq=270` |
+| owner's store (D's node) | `total=200`, `orgFrames=144`, `maxSeq=270` |
 | member's read view (主控) | **9–11 messages**, with holes: held `265, 266, 268, 269, 270, 271, 274`, missing `267` and `272` |
 
 The human using the member machine could not see messages that demonstrably

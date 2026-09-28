@@ -18,9 +18,9 @@
 
 **0.1.45 的唤醒面在「唤醒」处就断了**：`runListenWake` 调完 `agent.followup` 之后只写一行自己的日志（`service.ts:1264`，改动前），**不向房间发任何东西**；而发送侧的 `woken`（`wakePreviewFor`，`service.ts:1172`）是**按同一条规则在本机房间视图上做的预测**，它数的是**派发**不是**送达**——目标机离线、关了 listening、或在 `listenPending` 窗口里，这个数字**一模一样**。
 
-**当天代价（2026-09-15，seq 4405）**：控制节点发了一条点名四台机的会议召集。四台机**自己的日志都有** `woken seq=4405 … rule=mention`，小黄和小麦甚至有 `activate-chat`，**但只有小捷回了话**。另外三台**什么也没产生**——不是"没有日志"，是**没有任何地方**能区分「我没收到」和「我收到了没动」。定性这件事，靠的是**手工读 142,000 行日志**。
+**当天代价（2026-09-15，seq 4405）**：控制节点发了一条点名四台机的会议召集。四台机**自己的日志都有** `woken seq=4405 … rule=mention`，C和B甚至有 `activate-chat`，**但只有A回了话**。另外三台**什么也没产生**——不是"没有日志"，是**没有任何地方**能区分「我没收到」和「我收到了没动」。定性这件事，靠的是**手工读 142,000 行日志**。
 
-小捷在它自己的会议回答（seq 4406）里给了独立旁证：**验收标准本身从来没有被当成交付物** —— 三次 harness 回滚里有两次是**判定代码**的 bug，"服务端全绿 ⇒ 宣布成功"发布了一个 UI 完全坏掉的版本。这一条正是本版的核心：把一个**没人能证伪**的成功信号，换成一个**能证伪**的回执。
+A在它自己的会议回答（seq 4406）里给了独立旁证：**验收标准本身从来没有被当成交付物** —— 三次 harness 回滚里有两次是**判定代码**的 bug，"服务端全绿 ⇒ 宣布成功"发布了一个 UI 完全坏掉的版本。这一条正是本版的核心：把一个**没人能证伪**的成功信号，换成一个**能证伪**的回执。
 
 ---
 
@@ -105,7 +105,7 @@ PS> node <workdir>\_fix-46\gate-ack-receipt.mjs "C:\work\项目\dsh-agent-room\l
 ```
 [A the target machine posts ONE receipt for a dispatch that names it]
    seq=1 wakes=1
-   LOG: listening: woken seq=1 in 01a0a39d-d6aa-… (from=小捷, rule=mention, mentions[]=01a0a39d-d651-…)
+   LOG: listening: woken seq=1 in 01a0a39d-d6aa-… (from=A, rule=mention, mentions[]=01a0a39d-d651-…)
    ROOM: (no receipt line at all — the target machine said nothing)      ← 唤醒成功，回执为零
 PASS  A the dispatch actually WOKE the target (0.1.45 behaviour)  expected=1 actual=1
 FAIL  A exactly ONE receipt line in the room for that seq  expected=1 actual=0
@@ -118,11 +118,11 @@ FAIL  E the silent machine becomes an UNACKED target  expected=1 actual=n/a (no 
 
 ```
    seq=1 wakes=1
-   ROOM: [ack] KEVINKIKI 已接手 seq=1
+   ROOM: [ack] ***** 已接手 seq=1
 PASS  A exactly ONE receipt line in the room for that seq  expected=1 actual=1
 PASS  B the receipt boundary itself refuses the repeat  expected=1 actual=1
    /state.ack = {"rooms":1,"receiptsPosted":1,"receiptsDup":1,…,"maxAckedSeq":1,"unackedTargets":0,…}
-   ROOM: [ack-miss] seq=4 未回执：小麦 (waited 121s)
+   ROOM: [ack-miss] seq=4 未回执：B (waited 121s)
 PASS  E the silent machine becomes an UNACKED target  expected=1 actual=1
 PASS  F the read window is still >= 200 rows  expected=yes actual=yes
 ```
@@ -180,7 +180,7 @@ SUITES=20  TESTS=138  PASS=138  FAIL=0
 0.1.45 的先例（§7.2 那条）在本版继续执行：**现场证明需要先有这个包**（成员机从 `http://your-host:8090/` 拉包升级），所以现场原始输出**写在卡里**，不回头重打包——0.1.44 一晚重打包 4 次、把已公布 md5 作废 3 次，代价是下游说明全部失效。
 
 - 现场判据与原始输出：`<workdir>\card-08-ack-receipt.md` §6（哪几台机回了执、房间里的原文、`/state.ack` 的数值、以及**哪几台没回执、新信号怎么说的**）。
-- 控制机纪律：**没有**重启/升级控制机（本会话所在）；**没有**重启房主小婷（未发通知前不动房主）；每次 exec 都会在房间留一条 `[org:exec:result]` 回显——已知噪音，本版不修。
+- 控制机纪律：**没有**重启/升级控制机（本会话所在）；**没有**重启房主D（未发通知前不动房主）；每次 exec 都会在房间留一条 `[org:exec:result]` 回显——已知噪音，本版不修。
 
 ---
 
@@ -214,7 +214,7 @@ $env:AR_LIB = $OLD; node ($REPO + "\test\ack.test.mjs")     # 期望 1 pass / 11
 
 ```powershell
 # 1) 成员机（非房主）：具名参数，别依赖脚本默认（默认值是 0.1.40，照抄不带参数 = 空操作）
-#    小捷/小麦（Windows）：node → detached powershell（D-32 的结论：被禁的是 cmd 直接启动这条路径）
+#    A/B（Windows）：node → detached powershell（D-32 的结论：被禁的是 cmd 直接启动这条路径）
 #    先停服务再装，**绝不在活进程上覆盖安装**（今天两台机器就是这么卡住的）
 powershell -NoProfile -ExecutionPolicy Bypass -File "C:\studio\upgrade-studio.ps1" -RoomVer 0.1.46 -OrgVer 0.2.12
 # 2) 升级后三看
@@ -222,8 +222,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "C:\studio\upgrade-studio.ps
 #    监听：GET http://127.0.0.1:3080/agent-room-api/state         该房 listening=true
 #    新键：同一条 /state 出现 `ack` 块（旧版没有这个块）
 # 3) 现场判据（控制机发、目标机看）
-#    控制机：POST /agent-room-api/rooms/<roomId>/chat  {"text":"【派活】@小捷 @小麦 …","human":false,"mentions":["小捷","小麦"]}
-#    房间  ：出现 `[ack] 小捷 已接手 seq=<n>` / `[ack] 小麦 已接手 seq=<n>`   ← 这就是"活到了人手上"的判据
+#    控制机：POST /agent-room-api/rooms/<roomId>/chat  {"text":"【派活】@A @B …","human":false,"mentions":["A","B"]}
+#    房间  ：出现 `[ack] A 已接手 seq=<n>` / `[ack] B 已接手 seq=<n>`   ← 这就是"活到了人手上"的判据
 #    目标机：/state.ack.receiptsPosted ≥ 1、/state.ack.maxAckedSeq = <n>
 # 4) 回滚（一台机器）
 powershell -NoProfile -ExecutionPolicy Bypass -File "C:\studio\upgrade-studio.ps1" -RoomVer 0.1.45 -OrgVer 0.2.12
@@ -238,14 +238,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "C:\studio\upgrade-studio.ps
 
 1. **回执证明的是"交到了常驻 agent 手上"，不是"模型开始产出"。** `agent.followup` 之后是本插件的边界之外（harness/模型）；本版**没有**打通"模型第一个 token"这个信号，也没有打通"这一轮跑完了"。**因此"回执在"仍然不能推出"活干完了"** —— 它只把"没人接手"这一半变成可证伪。
 2. **回执不落盘。** 重启后 `pendingTargets` 归零、未完成期望丢失（见 §3 第 8 条）。跨重启的对账**本版不做**。
-3. **缺口：非房主发送方在房间里留不下缺席那一行。** 成员（如小捷）派活给另一台机且对方没回执时，它有 `unackedTargets` 计数，**但房间里不会出现 `[ack-miss]` 行**（权威写入口只属于房主，不新开写路径）。房主侧的两条路都实测过（门禁 E 例 + 运行时用例）；**成员侧的计数器路径只在本地探针验证，未在真机上验证**。
+3. **缺口：非房主发送方在房间里留不下缺席那一行。** 成员（如A）派活给另一台机且对方没回执时，它有 `unackedTargets` 计数，**但房间里不会出现 `[ack-miss]` 行**（权威写入口只属于房主，不新开写路径）。房主侧的两条路都实测过（门禁 E 例 + 运行时用例）；**成员侧的计数器路径只在本地探针验证，未在真机上验证**。
 4. **回执的"目标机是同一个人"这一层没做。** 回执只认机器（agentId/nickname），无法区分"这台机的常驻 agent 接手了"和"这台机上某人接手了"。
 5. **限速的代价没有实测边界**：2 s 是按唤醒面物理上界推导（§3 第 5 条），**未**在真实高并发派活下量过"被限速的回执占比"。被限速会显示为发送侧 `unackedTargets`，**这是可观测的**，但本版没有给它单独的区分计数（例如"因限速而缺席"）。
 6. **`[ack]` 行会出现在浏览器房间视图里**。本版只保证它**不唤醒任何人**、**每轮聚合 1 行日志**，**没有**把它从房间视图中剥成"系统消息"样式。
 7. **`pendingSkips` 仍然会涨**，且**依旧不是健康信号**：一轮 agent 可能跑几分钟而 sweep 每 30 s 一轮，跳过是**设计**。本版没有改它，也没有把它接进 `ack` 的判定——因此**一个 `listenPending` 窗口内的派活，回执会晚到**（可能晚一整个 sweep），在 120 s 窗口内一般仍能覆盖。
 8. **没有**做长稳/压测：回执日志体积上界是**推导值**（≤1 行/房间/2 s，且被 `(room,seq)` 唯一性进一步压住），未在真实流量下实测。
 9. **没有**验证与 agent-org 0.2.12/0.2.10 的交互：org 只读 `confirmedByOwner`/`delivered`，本版未动这两个字段（理论无影响，**未实测**）。`[ack]`/`[ack-miss]` 行会作为普通聊天流经过 org 的聊天通道。
-10. **房主（小婷）未升级、控制机未升级**（硬约束：不重启会话所在机，不动房主）。因此**控制机自身的发送侧 `ack` 计数在本版发布时不可用**——它的 `/state` 里没有 `ack` 块，必须靠房间里的回执行 + 目标机的 `/state` 判读。这一条是发布当晚最需要提醒下游的事实。
+10. **房主（D）未升级、控制机未升级**（硬约束：不重启会话所在机，不动房主）。因此**控制机自身的发送侧 `ack` 计数在本版发布时不可用**——它的 `/state` 里没有 `ack` 块，必须靠房间里的回执行 + 目标机的 `/state` 判读。这一条是发布当晚最需要提醒下游的事实。
 
 ---
 

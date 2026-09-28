@@ -41,7 +41,7 @@
 
 ## 3. 为什么是「单调水位线」而不是 TTL（定稿采纳）
 
-原卡提议 `(roomId, seq)` + **300 s TTL**。两位独立评委（小婷 84、小捷 88）先后否决，理由是同一条：
+原卡提议 `(roomId, seq)` + **300 s TTL**。两位独立评委（D 84、A 88）先后否决，理由是同一条：
 
 > **回退跨度没有上界** —— TTL 是有限的，回退是随机的。
 > 实测：成员侧本地尾巴 **15 条**（seq 2380…2482）vs 房主权威库 **2200+ 条**。
@@ -77,7 +77,7 @@ PS> cd <workdir>; node _repro-wake-plane-0.1.41.mjs
   -> phase 0 is used for BOTH planes below (same scenario, same state)
 
 === [OLD] the measured production shape: one regressed sweep per 90 s cycle ===
-  room=01a098a2  message seq=315 (author 小婷, human:true) — the owner's store held it throughout
+  room=01a098a2  message seq=315 (author D, human:true) — the owner's store held it throughout
   fake room state: local 20-row window tail = 315, except every 3rd sweep where the mirror reports 300
   (first 14 of 21 events)
     t=+0s  seed listenSeen=300 (regressed=true)

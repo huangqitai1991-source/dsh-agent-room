@@ -4,11 +4,11 @@
  *
  * THE DEFECT (measured twice, in BOTH directions, on three machines)
  *
- *  小黄 relay → lan: POST /agent-room-api/mode {"mode":"lan","address":"192.168.31.82:9317"}
+ *  C relay → lan: POST /agent-room-api/mode {"mode":"lan","address":"192.168.31.82:9317"}
  *                    returned ok:true (relay=off) and a 3 s re-read still showed
  *                    bridge={"kind":"relay","state":"closed","address":"ws://relay.example:9320"}
  *                    while POST /chat answered confirmedByOwner:true, confirmedSeq:2518.
- *  小麦 lan → relay: POST /agent-room-api/mode {"mode":"relay"} returned ok:true and the
+ *  B lan → relay: POST /agent-room-api/mode {"mode":"relay"} returned ok:true and the
  *                    state showed bridge=direct/closed.
  *  主控 did NOT reproduce it: direct/open then relay/open, correctly.
  *

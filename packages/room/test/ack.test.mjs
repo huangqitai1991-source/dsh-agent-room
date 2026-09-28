@@ -6,7 +6,7 @@
  *
  * 0.1.45 fixed the WAKE plane: a script message (`human=false`) that names a node wakes
  * it, and every node's own log says so (`listening: woken seq=… rule=mention`). That was
- * verified on 小黄, 小捷, 小婷 and 小麦. **And that is where the evidence stopped.**
+ * verified on C, A, D and B. **And that is where the evidence stopped.**
  *
  * The control node then dispatched a meeting call (room seq 4405) naming all four
  * machines. All four logged the wake; two even logged `activate-chat`. **One replied.**
@@ -102,8 +102,8 @@ const {
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const ROOM = "01a098a2-2015-7a1d-b5f7-9eca45afa65d";
-const SELF_JIE = "01a0281a-52de-7c4d-a1e9-7e6db367d3dd"; // 小捷
-const SELF_XM = "01a09461-351d-793d-bf49-b8e08641f082"; // 小麦
+const SELF_JIE = "01a0281a-52de-7c4d-a1e9-7e6db367d3dd"; // A
+const SELF_XM = "01a09461-351d-793d-bf49-b8e08641f082"; // B
 const SEQ_4405 = 4405; // the meeting call that woke four machines and got one reply
 
 /** Same node:test idiom as the other suites (see wake.test.mjs). */
@@ -134,12 +134,12 @@ function needAck(what) {
 
 guarded("0.1.46 receipt: ONE line naming MY nickname and the seq I am acknowledging", () => {
   needAck("the receipt line is the whole deliverable");
-  const line = formatAckReceipt({ nickname: "小捷", agentId: SELF_JIE, seq: SEQ_4405 });
+  const line = formatAckReceipt({ nickname: "A", agentId: SELF_JIE, seq: SEQ_4405 });
   console.log(`  [line] ${line}`);
   assert.ok(!line.includes("\n"), "a receipt is ONE line — a receipt that needs reading is not a receipt");
   assert.ok(line.length <= ACK_RECEIPT_MAX_CHARS, `the receipt must stay short, got ${line.length} chars`);
   assert.ok(line.startsWith(ACK_TAG), "the receipt must carry the machine-readable tag");
-  assert.ok(line.includes("小捷"), "the receipt must name the ACKING node's OWN nickname");
+  assert.ok(line.includes("A"), "the receipt must name the ACKING node's OWN nickname");
   assert.ok(line.includes("seq=" + SEQ_4405), "the receipt must name the seq it acknowledges");
   assert.ok(line.includes("已接手"), "the receipt must say the target has started handling it");
   // NOT addressed to anyone: an `@` here would turn every receipt into a fresh mention of
@@ -153,34 +153,34 @@ guarded("0.1.46 receipt: ONE line naming MY nickname and the seq I am acknowledg
 
 guarded("0.1.46 receipt: the receipt is a MACHINE FRAME — it wakes nobody, including its own author", () => {
   needAck("the receipt must not manufacture a wake storm");
-  const receipt = formatAckReceipt({ nickname: "小捷", agentId: SELF_JIE, seq: SEQ_4405 });
+  const receipt = formatAckReceipt({ nickname: "A", agentId: SELF_JIE, seq: SEQ_4405 });
   assert.strictEqual(isAckPlaneFrame(receipt), true, "the ack plane must recognise its own line");
   assert.strictEqual(isAckPlaneFrame("【派活】请跑回归"), false, "and must not swallow real chat");
   assert.strictEqual(isMachineSelfTestFrame(receipt), false, "it is a SEPARATE classifier, not a stamp hack");
 
-  // A COLLEAGUE reading 小捷's receipt: denied as a machine frame, aggregated into one
+  // A COLLEAGUE reading A's receipt: denied as a machine frame, aggregated into one
   // line per sweep instead of consuming the per-message naming budget.
   const colleague = decideListenWake({
-    message: { from: SELF_JIE, fromNickname: "小捷", human: false, text: receipt },
-    self: { agentId: SELF_XM, nickname: "小麦" },
+    message: { from: SELF_JIE, fromNickname: "A", human: false, text: receipt },
+    self: { agentId: SELF_XM, nickname: "B" },
   });
   assert.strictEqual(colleague.wake, false, "a receipt must never wake a colleague (four machines run listening)");
   assert.strictEqual(colleague.reason, "machine-frame", "and the denial must name a rule the caller can count");
   // The ACKER reading its own receipt: card ④ applies first — self-authored.
   const own = decideListenWake({
-    message: { from: SELF_JIE, fromNickname: "小捷", human: false, text: receipt },
-    self: { agentId: SELF_JIE, nickname: "小捷" },
+    message: { from: SELF_JIE, fromNickname: "A", human: false, text: receipt },
+    self: { agentId: SELF_JIE, nickname: "A" },
   });
   assert.strictEqual(own.wake, false);
   assert.strictEqual(own.reason, "self-authored");
   // The absence notice is in the same family.
-  const miss = formatAckMiss({ seq: SEQ_4405, nicknames: ["小麦"], waitedMs: ACK_WINDOW_MS });
+  const miss = formatAckMiss({ seq: SEQ_4405, nicknames: ["B"], waitedMs: ACK_WINDOW_MS });
   console.log(`  [line] ${miss}`);
   assert.ok(miss.startsWith(ACK_MISS_TAG));
   assert.strictEqual(isAckPlaneFrame(miss), true, "the absence notice must be recognised too");
   assert.ok(!miss.includes("@"), "the absence notice must not mention anyone either");
   assert.strictEqual(
-    decideListenWake({ message: { from: SELF_JIE, human: false, text: miss }, self: { agentId: SELF_XM, nickname: "小麦" } }).wake,
+    decideListenWake({ message: { from: SELF_JIE, human: false, text: miss }, self: { agentId: SELF_XM, nickname: "B" } }).wake,
     false,
     "an absence notice must not wake the machine it is complaining about",
   );
@@ -258,7 +258,7 @@ guarded("0.1.46: memory stays bounded — room cap, seq cap and expectation cap 
   const many = new AckLedger();
   let accepted = 0;
   for (let i = 0; i < MAX_ACK_EXPECTATIONS + 5; i += 1) {
-    if (many.expect("r", i + 1, [{ agentId: SELF_JIE, nickname: "小捷" }], 0)) accepted += 1;
+    if (many.expect("r", i + 1, [{ agentId: SELF_JIE, nickname: "A" }], 0)) accepted += 1;
   }
   assert.strictEqual(accepted, MAX_ACK_EXPECTATIONS, "only the capped number of dispatches can be tracked");
   assert.strictEqual(many.stats().expectationOverflows, 5, "and the overflow is visible, not hidden");
@@ -270,7 +270,7 @@ guarded("0.1.46 sender: a receipt from the ADDRESSED machine is observed; nobody
   needAck("this is the half that makes 'not acked' decidable");
   const ledger = new AckLedger();
   assert.strictEqual(
-    ledger.expect(ROOM, SEQ_4405, [{ agentId: SELF_JIE, nickname: "小捷" }, { agentId: SELF_XM, nickname: "小麦" }], 0),
+    ledger.expect(ROOM, SEQ_4405, [{ agentId: SELF_JIE, nickname: "A" }, { agentId: SELF_XM, nickname: "B" }], 0),
     true,
   );
   let stats = ledger.stats();
@@ -278,23 +278,23 @@ guarded("0.1.46 sender: a receipt from the ADDRESSED machine is observed; nobody
   assert.strictEqual(stats.expectedTargets, 2, "both addressed machines are expected to receipt it");
   assert.strictEqual(stats.pendingTargets, 2, "and both start as pending");
 
-  // 小捷's receipt — the exact line 0.1.46 produces, as the owner stores it (`from` = the
+  // A's receipt — the exact line 0.1.46 produces, as the owner stores it (`from` = the
   // acking node's own agentId, which is what makes the match authoritative).
   const observed = ledger.observe(ROOM, [
     { seq: 4404, from: SELF_XM, text: "【汇报】先前的活儿干完了，很长的一段正文" },
-    { seq: 4405, from: SELF_JIE, text: formatAckReceipt({ nickname: "小捷", agentId: SELF_JIE, seq: SEQ_4405 }) },
+    { seq: 4405, from: SELF_JIE, text: formatAckReceipt({ nickname: "A", agentId: SELF_JIE, seq: SEQ_4405 }) },
   ]);
   console.log(`  [sender] observed=${JSON.stringify(observed)} stats=${JSON.stringify(ledger.stats())}`);
   assert.deepStrictEqual(observed, [SELF_JIE], "only the machine that actually receipted is counted");
   stats = ledger.stats();
   assert.strictEqual(stats.ackedTargets, 1, "one of two targets acked");
   assert.strictEqual(stats.maxAckedObservedSeq, SEQ_4405, "the highest acked seq is readable without any log");
-  assert.strictEqual(stats.pendingTargets, 1, "小麦 is still pending — she has not been heard from");
+  assert.strictEqual(stats.pendingTargets, 1, "B is still pending — she has not been heard from");
 
   // A receipt that names the WRONG seq, or comes from someone who was not addressed, must
   // not count: a false positive here would be worse than no receipt at all.
   const wrongSeq = ledger.observe(ROOM, [
-    { seq: 9, from: SELF_XM, text: formatAckReceipt({ nickname: "小麦", agentId: SELF_XM, seq: 9999 }) },
+    { seq: 9, from: SELF_XM, text: formatAckReceipt({ nickname: "B", agentId: SELF_XM, seq: 9999 }) },
   ]);
   assert.deepStrictEqual(wrongSeq, [], "a receipt for a different seq must not close this expectation");
   const stranger = ledger.observe(ROOM, [
@@ -314,9 +314,9 @@ guarded("0.1.46 sender: a dispatch nobody acked becomes `unackedTargets` — the
   needAck("a silent non-delivery is the thing that cost a whole day");
   const ledger = new AckLedger(MAX_ACK_ROOMS, ACK_RATE_LIMIT_MS, ACK_WINDOW_MS);
   const t0 = 5_000_000;
-  ledger.expect(ROOM, SEQ_4405, [{ agentId: SELF_JIE, nickname: "小捷" }, { agentId: SELF_XM, nickname: "小麦" }], t0);
+  ledger.expect(ROOM, SEQ_4405, [{ agentId: SELF_JIE, nickname: "A" }, { agentId: SELF_XM, nickname: "B" }], t0);
   ledger.observe(ROOM, [
-    { seq: SEQ_4405, from: SELF_JIE, text: formatAckReceipt({ nickname: "小捷", agentId: SELF_JIE, seq: SEQ_4405 }) },
+    { seq: SEQ_4405, from: SELF_JIE, text: formatAckReceipt({ nickname: "A", agentId: SELF_JIE, seq: SEQ_4405 }) },
   ]);
   // Inside the window: nothing is declared missing yet (the target may still be working).
   assert.deepStrictEqual(ledger.expire(t0 + ACK_WINDOW_MS - 1), [], "inside the window nothing may be called missing");
@@ -325,7 +325,7 @@ guarded("0.1.46 sender: a dispatch nobody acked becomes `unackedTargets` — the
   const overdue = ledger.expire(t0 + ACK_WINDOW_MS + 1);
   console.log(`  [absence] overdue=${JSON.stringify(overdue)} stats=${JSON.stringify(ledger.stats())}`);
   assert.strictEqual(overdue.length, 1, "one dispatch had a missing receipt");
-  assert.deepStrictEqual(overdue[0].nicknames, ["小麦"], "and the missing party is named, not implied");
+  assert.deepStrictEqual(overdue[0].nicknames, ["B"], "and the missing party is named, not implied");
   assert.strictEqual(overdue[0].seq, SEQ_4405, "the seq is named — this is what makes it traceable in the room");
   const stats = ledger.stats();
   assert.strictEqual(stats.unackedTargets, 1, "the absence counter moved");
@@ -335,8 +335,8 @@ guarded("0.1.46 sender: a dispatch nobody acked becomes `unackedTargets` — the
   assert.deepStrictEqual(ledger.expire(t0 + ACK_WINDOW_MS + 10_000), [], "an expired expectation is closed once");
   assert.strictEqual(ledger.stats().unackedTargets, 1, "and the counter cannot drift by re-expiring");
   const ok = new AckLedger();
-  ok.expect(ROOM, 10, [{ agentId: SELF_JIE, nickname: "小捷" }], 0);
-  ok.observe(ROOM, [{ seq: 10, from: SELF_JIE, text: formatAckReceipt({ nickname: "小捷", seq: 10 }) }]);
+  ok.expect(ROOM, 10, [{ agentId: SELF_JIE, nickname: "A" }], 0);
+  ok.observe(ROOM, [{ seq: 10, from: SELF_JIE, text: formatAckReceipt({ nickname: "A", seq: 10 }) }]);
   assert.deepStrictEqual(ok.expire(ACK_WINDOW_MS + 1), [], "a fully acked dispatch produces no absence notice");
   assert.strictEqual(ok.stats().unackedTargets, 0);
   // One absence notice per dispatch, however many sweeps see it.
@@ -423,7 +423,7 @@ guarded("0.1.46 runtime: a mention wakes the node AND posts exactly ONE receipt 
     assert.ok(me?.agentId && me?.nickname, "the probe node needs an identity (nickname is what the receipt names)");
     svc.roomService.joinOwnedRoom(
       room.roomId,
-      { agentId: SELF_JIE, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() },
+      { agentId: SELF_JIE, nickname: "A", capabilities: [], createdAt: new Date().toISOString() },
       {},
     );
     svc.setListening(room.roomId, true);
@@ -432,7 +432,7 @@ guarded("0.1.46 runtime: a mention wakes the node AND posts exactly ONE receipt 
     // The dispatch shape our scripts send: human=false, but it NAMES this node.
     const named = await svc.roomService.addChatMessage(
       room.roomId,
-      { agentId: SELF_JIE, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() },
+      { agentId: SELF_JIE, nickname: "A", capabilities: [], createdAt: new Date().toISOString() },
       { text: "【派活】@" + (me.nickname ?? me.agentId) + " 请跑回归", human: false, mentions: [me.agentId] },
     );
     svc.listenSeen.set(room.roomId, named.seq - 1);
@@ -500,7 +500,7 @@ guarded("0.1.46 runtime: NO receipt for a denied wake, and none when the wake is
   console.warn = capture;
   try {
     const room = await svc.gateway.createRoom({ title: "Ack deny", type: "persistent" });
-    const author = { agentId: SELF_JIE, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() };
+    const author = { agentId: SELF_JIE, nickname: "A", capabilities: [], createdAt: new Date().toISOString() };
     svc.roomService.joinOwnedRoom(room.roomId, author, {});
     svc.setListening(room.roomId, true);
     await svc.sweepListening();
@@ -518,7 +518,7 @@ guarded("0.1.46 runtime: NO receipt for a denied wake, and none when the wake is
     await settle();
     // (b) a machine self-test stamp (the storm guard).
     svc.listenPending.delete(room.roomId);
-    const stamp = await send("小捷升 0.1.45 自证");
+    const stamp = await send("A升 0.1.45 自证");
     svc.listenSeen.set(room.roomId, stamp - 1);
     await svc.sweepListening();
     await settle();
@@ -546,7 +546,7 @@ guarded("0.1.46 runtime: NO receipt for a denied wake, and none when the wake is
 
     // (e) a wake that is SKIPPED by the watermark (a second sighting of a woken seq) is
     // not a wake: no receipt, and nothing is counted as ackable.
-    svc.roomService.joinOwnedRoom(room.roomId, { agentId: SELF_XM, nickname: "小麦", capabilities: [], createdAt: new Date().toISOString() }, {});
+    svc.roomService.joinOwnedRoom(room.roomId, { agentId: SELF_XM, nickname: "B", capabilities: [], createdAt: new Date().toISOString() }, {});
     svc.listenPending.delete(room.roomId);
     const mention = await svc.roomService.addChatMessage(room.roomId, author, {
       text: "@" + svc.roomService.getIdentity().nickname + " 请跑回归",
@@ -589,8 +589,8 @@ guarded("0.1.46 runtime: the sender's side — receipts observed, absence named 
   try {
     const room = await svc.gateway.createRoom({ title: "Ack sender", type: "persistent" });
     const me = svc.roomService.getIdentity();
-    const jie = { agentId: SELF_JIE, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() };
-    const xm = { agentId: SELF_XM, nickname: "小麦", capabilities: [], createdAt: new Date().toISOString() };
+    const jie = { agentId: SELF_JIE, nickname: "A", capabilities: [], createdAt: new Date().toISOString() };
+    const xm = { agentId: SELF_XM, nickname: "B", capabilities: [], createdAt: new Date().toISOString() };
     svc.roomService.joinOwnedRoom(room.roomId, jie, {});
     svc.roomService.joinOwnedRoom(room.roomId, xm, {});
 
@@ -608,19 +608,19 @@ guarded("0.1.46 runtime: the sender's side — receipts observed, absence named 
     assert.strictEqual(stats.dispatches, 1, "the dispatch must be tracked — without this nothing can be compared");
     assert.strictEqual(stats.expectedTargets, 2, "both addressed machines are expected to receipt it");
 
-    // (2) 小捷 answers with a receipt; 小麦 does not (this is TODAY: one of four replied).
+    // (2) A answers with a receipt; B does not (this is TODAY: one of four replied).
     await svc.roomService.addChatMessage(room.roomId, jie, {
-      text: formatAckReceipt({ nickname: "小捷", agentId: jie.agentId, seq }),
+      text: formatAckReceipt({ nickname: "A", agentId: jie.agentId, seq }),
       human: false,
     });
     await svc.sweepAckPlane();
     stats = svc.ackLedger.stats();
-    console.log(`  [sender] after 小捷's receipt: ackedTargets=${stats.ackedTargets} pending=${stats.pendingTargets} maxAckedObservedSeq=${stats.maxAckedObservedSeq}`);
+    console.log(`  [sender] after A's receipt: ackedTargets=${stats.ackedTargets} pending=${stats.pendingTargets} maxAckedObservedSeq=${stats.maxAckedObservedSeq}`);
     assert.strictEqual(stats.ackedTargets, 1, "the machine that receipted must be counted from the ROOM, not from a log");
     assert.strictEqual(stats.maxAckedObservedSeq, seq, "and the acked seq must be readable");
     assert.ok(lines.some((l) => l.includes("ack: receipt OBSERVED")), "the observation must leave a line");
 
-    // (3) The window closes with 小麦 still silent → the absence becomes a fact.
+    // (3) The window closes with B still silent → the absence becomes a fact.
     await svc.sweepAckPlane(Date.now() + ACK_WINDOW_MS + 1_000);
     stats = svc.ackLedger.stats();
     const miss = await missLines(svc, room.roomId);
@@ -629,7 +629,7 @@ guarded("0.1.46 runtime: the sender's side — receipts observed, absence named 
     assert.strictEqual(stats.ackedTargets, 1, "without changing the machine that answered");
     assert.strictEqual(miss.length, 1, "and ONE rate-limited line must say so in the room");
     assert.ok(miss[0].includes("seq=" + seq), `the absence line must name the seq: ${miss[0]}`);
-    assert.ok(miss[0].includes("小麦"), "and the machine that did not answer");
+    assert.ok(miss[0].includes("B"), "and the machine that did not answer");
     assert.ok(!miss[0].includes("@"), "without waking anyone");
     assert.strictEqual(stats.missNotices, 1, "the notice is counted");
     // A second sweep must not repeat the notice (that is the noise half of the design).
@@ -741,18 +741,18 @@ guarded("0.1.46 static guard: the receipt sits AFTER the dispatch, is never awai
 guarded("0.1.46: 0.1.45's wake behaviour is UNCHANGED (mention wakes, human fallback wakes, denials still denied)", () => {
   // This is a regression lock, not a new feature: the whole 0.1.45 contract must survive
   // the ack plane being bolted next to it. Every case below is a 0.1.45 acceptance case.
-  const self = { agentId: SELF_JIE, nickname: "小捷" };
+  const self = { agentId: SELF_JIE, nickname: "A" };
   const cases = [
-    ["mention by nickname", { from: SELF_XM, human: false, text: "@小捷 请跑回归" }, true, "mention"],
+    ["mention by nickname", { from: SELF_XM, human: false, text: "@A 请跑回归" }, true, "mention"],
     ["mention by agentId", { from: SELF_XM, human: false, text: "收件人 " + SELF_JIE + " 请回复" }, true, "mention"],
     ["mentions[] array", { from: SELF_XM, human: false, mentions: [SELF_JIE], text: "请跑回归" }, true, "mention"],
-    ["full-width ＠ (Chinese IME)", { from: SELF_XM, human: false, text: "＠小捷 请跑回归" }, true, "mention"],
+    ["full-width ＠ (Chinese IME)", { from: SELF_XM, human: false, text: "＠A 请跑回归" }, true, "mention"],
     ["human:true fallback (no address)", { from: "01a09483-3668-7bdf-9cc2-0180f314c8cf", human: true, text: "无点名的人类指令" }, true, "human-fallback"],
     ["unaddressed human:false", { from: SELF_XM, human: false, text: "【通知】今晚全员升级" }, false, "not-addressed"],
-    ["nickname in prose is not an address", { from: SELF_XM, human: false, text: "分工：小捷、小麦各一条" }, false, "not-addressed"],
-    ["machine self-test stamp", { from: SELF_XM, human: true, mentions: [SELF_JIE], text: "小麦 0.1.45 自证 @小捷" }, false, "machine-frame"],
-    ["control frame", { from: SELF_XM, human: true, mentions: [SELF_JIE], text: "[org:exec:result] exit=0 @小捷" }, false, "control-frame"],
-    ["self-authored", { from: SELF_JIE, human: true, mentions: [SELF_JIE], text: "@小捷 我自己的话" }, false, "self-authored"],
+    ["nickname in prose is not an address", { from: SELF_XM, human: false, text: "分工：A、B各一条" }, false, "not-addressed"],
+    ["machine self-test stamp", { from: SELF_XM, human: true, mentions: [SELF_JIE], text: "B 0.1.45 自证 @A" }, false, "machine-frame"],
+    ["control frame", { from: SELF_XM, human: true, mentions: [SELF_JIE], text: "[org:exec:result] exit=0 @A" }, false, "control-frame"],
+    ["self-authored", { from: SELF_JIE, human: true, mentions: [SELF_JIE], text: "@A 我自己的话" }, false, "self-authored"],
   ];
   for (const [label, message, wakeExpected, reasonExpected] of cases) {
     const decision = decideListenWake({ message, self });

@@ -12,9 +12,9 @@
  *     if (!proposedConfig.provider || !proposedConfig.model) throw new Error(`agent "…" has no
  *     provider/model: set AgentOptions.provider and AgentOptions.model …`);
  *
- * and `kick()` (`:481-490`) swallows that error (`catch (_error) {}`). Net effect on 小黄 and
- * 小婷: the wake was handed over, `followup accepted` printed, and **nothing ever ran** — for
- * hours, with no error anywhere. 小黄's duty transcript stayed 5564 bytes, unchanged since it
+ * and `kick()` (`:481-490`) swallows that error (`catch (_error) {}`). Net effect on C and
+ * D: the wake was handed over, `followup accepted` printed, and **nothing ever ran** — for
+ * hours, with no error anywhere. C's duty transcript stayed 5564 bytes, unchanged since it
  * was created. Every host create/resume path passes a real selection
  * (`dsh-host-apiproxy/lib/index.js:5532` `defaultModelSelection: () => ctx.agentDefaultModel.currentSelection()`);
  * the plugin's did not.
@@ -322,7 +322,7 @@ guarded("0.1.48: when NO source has a model, the machine SAYS SO and never print
 
     // Now the wake path: it must NOT print a success-shaped accepted line.
     const room = await probe.svc.gateway.createRoom({ title: "No model", type: "persistent" });
-    const author = { agentId: SELF_JIE, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() };
+    const author = { agentId: SELF_JIE, nickname: "A", capabilities: [], createdAt: new Date().toISOString() };
     probe.svc.roomService.joinOwnedRoom(room.roomId, author, {});
     const me = probe.svc.roomService.getIdentity();
     probe.svc.setListening(room.roomId, true);
@@ -424,7 +424,7 @@ guarded("0.1.48: the host's OWN settings.yaml supplies the model when the in-pro
 });
 
 guarded("0.1.48 LAST MILE: with every model source empty, the plugin asks the HOST for a real session", async () => {
-  need048("measured on 小麦: no live session, nothing persisted, no settings section, no ctx service — all four empty");
+  need048("measured on B: no live session, nothing persisted, no settings section, no ctx service — all four empty");
   const { createServer } = await import("node:http");
   const requests = [];
   const sessionId = "session-e03107fc-efd5-480d-bf26-98df83d9941e";
@@ -546,7 +546,7 @@ guarded("0.1.48: a turn error on the resident agent is surfaced and counted (the
 /* ========== 3. our own machine frames are not the agent speaking (D-37) ========== */
 
 guarded("0.1.48: an own [org:*] / [ack] frame is NOT output and does NOT end a thinking state", async () => {
-  need048("D-37: this exact misreading recorded 小黄 and 小婷 as healthy while they said nothing all day");
+  need048("D-37: this exact misreading recorded C and D as healthy while they said nothing all day");
   const probe = await boot(19819, "ar48-controlframe-", {
     liveAgents: [fakeAgent("session-cf", { provider: "deepseek", model: "v4" })],
     replyAgentId: "session-cf",
@@ -555,7 +555,7 @@ guarded("0.1.48: an own [org:*] / [ack] frame is NOT output and does NOT end a t
   try {
     const me = probe.svc.roomService.getIdentity();
     const room = await probe.svc.gateway.createRoom({ title: "Control frames", type: "persistent" });
-    const author = { agentId: SELF_JIE, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() };
+    const author = { agentId: SELF_JIE, nickname: "A", capabilities: [], createdAt: new Date().toISOString() };
     probe.svc.roomService.joinOwnedRoom(room.roomId, author, {});
     // A wake is in flight, then this node echoes an org frame into the room.
     probe.svc.activation.noteDispatch(room.roomId, 4405);
@@ -572,11 +572,11 @@ guarded("0.1.48: an own [org:*] / [ack] frame is NOT output and does NOT end a t
       "the ignored frame must be named in the log",
     );
     // An [ack] receipt is in the same family.
-    probe.svc.noteOwnReply(room.roomId, { seq: 4407, from: me.agentId, text: "[ack] 小捷 已接手 seq=4405", human: false });
+    probe.svc.noteOwnReply(room.roomId, { seq: 4407, from: me.agentId, text: "[ack] A 已接手 seq=4405", human: false });
     assert.strictEqual(probe.svc.activation.stats().outputs, 0, "a receipt is not the agent speaking either");
     assert.strictEqual(probe.svc.isActivateThinking(room.roomId), true);
     // A REAL chat message from this node is the only thing that counts.
-    probe.svc.noteOwnReply(room.roomId, { seq: 4408, from: me.agentId, text: "【小麦 · 链路自证】收到，已开工", human: false });
+    probe.svc.noteOwnReply(room.roomId, { seq: 4408, from: me.agentId, text: "【B · 链路自证】收到，已开工", human: false });
     stats = probe.svc.activation.stats();
     console.log(`  [control-frame] after real chat: outputs=${stats.outputs} thinking=${probe.svc.isActivateThinking(room.roomId)}`);
     assert.strictEqual(stats.outputs, 1, "a real chat message IS output");
@@ -655,7 +655,7 @@ guarded("0.1.48 static guard: the model is supplied at creation, verified, and s
 /* ============ 5. 0.1.49 — the workspace that lets the sandboxed shell start at all ============ */
 
 /**
- * MEASURED ON 小麦, 2026-09-15 midnight, from the session's OWN transcript (first hand):
+ * MEASURED ON B, 2026-09-15 midnight, from the session's OWN transcript (first hand):
  *
  *   TOOLCALL pwsh {"command": "Invoke-RestMethod …"}          ← the prompt's fallback route
  *   TOOLRESULT Error: Windows ACL temp root must be outside the workspace:
@@ -685,7 +685,7 @@ function need049(what) {
 }
 
 guarded("0.1.49: the session workspace is chosen so the sandboxed shell can start at all", async () => {
-  need049("小麦: workspace=<home> contains %TEMP% ⇒ every pwsh call died before running");
+  need049("B: workspace=<home> contains %TEMP% ⇒ every pwsh call died before running");
   const { homedir, tmpdir } = await import("node:os");
   const { dirname, join: j } = await import("node:path");
   const temp = tmpdir();
@@ -722,7 +722,7 @@ guarded("0.1.49: the session workspace is chosen so the sandboxed shell can star
 });
 
 guarded("0.1.49: the HOST session is created with a workspace that cannot contain the temp root", async () => {
-  need049("0.1.48 handed the host `cwd: homedir()`; that single line is why 小麦 ran turns and said nothing");
+  need049("0.1.48 handed the host `cwd: homedir()`; that single line is why B ran turns and said nothing");
   const { createServer } = await import("node:http");
   const { tmpdir } = await import("node:os");
   const { dirname, join: j } = await import("node:path");
@@ -780,7 +780,7 @@ guarded("0.1.49: the HOST session is created with a workspace that cannot contai
 });
 
 guarded("0.1.49: a session whose workspace kills the shell is never the resident agent", async () => {
-  need049("小麦: the poisoned session had a model (executable) and still could not answer");
+  need049("B: the poisoned session had a model (executable) and still could not answer");
   const { tmpdir } = await import("node:os");
   const { dirname, join: j } = await import("node:path");
   const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");

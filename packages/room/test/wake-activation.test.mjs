@@ -11,12 +11,12 @@
  * while the sweep runs every 30 s.
  *
  * Three machines, three different failures, all first-hand:
- *   小婷 — manual `POST /activate-chat` → `active-session: session-b7496a19…` → `registry dump
+ *   D — manual `POST /activate-chat` → `active-session: session-b7496a19…` → `registry dump
  *          — detected=…` → `accepted … thinking=true` → `dispatching followup … to agent
- *          agent-room-duty-01a09483…` → `followup accepted` → 小婷 POSTED INTO THE ROOM. Works.
- *   小麦 — `accepted … thinking=true` → `dispatching followup … agent-room-duty-01a09461…` →
+ *          agent-room-duty-01a09483…` → `followup accepted` → D POSTED INTO THE ROOM. Works.
+ *   B — `accepted … thinking=true` → `dispatching followup … agent-room-duty-01a09461…` →
  *          **the log just stops.** No `followup accepted`, no error, no counter. SILENT.
- *   小黄 — `active-session: session-7f81275b… (global fallback, … dir=false)` → `registry dump
+ *   C — `active-session: session-7f81275b… (global fallback, … dir=false)` → `registry dump
  *          … list=[] roots=[]` → no `accepted`, no `dispatching`. Its resident agent is not
  *          bound to a duty workspace: STRUCTURALLY unable to accept work, and nothing in
  *          `/state` said so.
@@ -29,9 +29,9 @@
  *      the sweep for ten minutes produces no second attempt (no storm), and a failing
  *      escalation is counted and named instead of retried;
  *   3. "no resident agent" is reportable AS SUCH (`noResidentAgent` + `resolvedViaNone` +
- *      `lastResidentOk:0`) — 小黄's machine is readable from `/state` alone;
+ *      `lastResidentOk:0`) — C's machine is readable from `/state` alone;
  *   4. the timeout path is named: accepted, then silence inside the window, is
- *      `acceptedNoOutput` (小麦), and a refused dispatch is `refusedNoOutput` — the two can
+ *      `acceptedNoOutput` (B), and a refused dispatch is `refusedNoOutput` — the two can
  *      never be confused;
  *   5. THE ACCEPTANCE: a machine whose wake produced nothing ANSWERS after the escalation —
  *      and the ACK receipt is NOT counted as that answer (it is written by this plugin
@@ -98,8 +98,8 @@ const {
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const ROOM = "01a098a2-2015-7a1d-b5f7-9eca45afa65d";
-const SELF_JIE = "01a0281a-52de-7c4d-a1e9-7e6db367d3dd"; // 小捷
-const SELF_XM = "01a09461-351d-793d-bf49-b8e08641f082"; // 小麦
+const SELF_JIE = "01a0281a-52de-7c4d-a1e9-7e6db367d3dd"; // A
+const SELF_XM = "01a09461-351d-793d-bf49-b8e08641f082"; // B
 
 /** Same node:test idiom as the other suites (see wake.test.mjs / ack.test.mjs). */
 let failures = 0;
@@ -213,7 +213,7 @@ guarded("0.1.47 activation: a dispatch that demonstrably STARTED is never escala
 });
 
 guarded("0.1.47 activation: the TIMEOUT path is named, and accepted-no-output can never be confused with refused", () => {
-  needActivation("小麦's 'dispatching followup … and then nothing' must be a number, not a mystery");
+  needActivation("B's 'dispatching followup … and then nothing' must be a number, not a mystery");
   const t0 = 4_000_000;
   const act = new WakeActivation(64, 20_000, 120_000, 10_000);
   // (a) ACCEPTED, then silence → acceptedNoOutput.
@@ -279,7 +279,7 @@ async function bootActProbe(port, tag, options = {}) {
   }
   assert.ok(svc.listenTimer != null, `the service must boot (${tag})`);
   const messages = [];
-  // A resident agent that answers NOTHING until it is escalated — the measured shape of 小麦.
+  // A resident agent that answers NOTHING until it is escalated — the measured shape of B.
   const silentThenAnswer = {
     id: "session-act-probe",
     sessionId: "session-act-probe",
@@ -350,14 +350,14 @@ async function dispatchMentionTo(svc, room, author) {
 const roomTexts = async (svc, roomId) =>
   (await svc.roomService.recentMessages(roomId, 200)).map((m) => m.text ?? "");
 
-guarded("0.1.47 runtime: NO RESIDENT AGENT is reported AS SUCH and moves a counter (小黄's machine)", async () => {
+guarded("0.1.47 runtime: NO RESIDENT AGENT is reported AS SUCH and moves a counter (C's machine)", async () => {
   needActivation("this is the failure that cost a whole day: a machine that cannot accept work");
   const probe = await bootActProbe(19611, "ar-act-noagent-", { agents: "empty" });
   const { svc } = probe;
   const logs = captureLogs();
   try {
     const room = await svc.gateway.createRoom({ title: "Act no agent", type: "persistent" });
-    const author = { agentId: SELF_JIE, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() };
+    const author = { agentId: SELF_JIE, nickname: "A", capabilities: [], createdAt: new Date().toISOString() };
     svc.roomService.joinOwnedRoom(room.roomId, author, {});
     await dispatchMentionTo(svc, room, author);
 
@@ -386,13 +386,13 @@ guarded("0.1.47 runtime: NO RESIDENT AGENT is reported AS SUCH and moves a count
   }
 });
 
-guarded("0.1.47 runtime: a wake that starts NOTHING is escalated ONCE — and the machine then ANSWERS (小麦)", async () => {
+guarded("0.1.47 runtime: a wake that starts NOTHING is escalated ONCE — and the machine then ANSWERS (B)", async () => {
   needActivation("this is the acceptance: a machine that previously produced nothing now produces output");
   const probe = await bootActProbe(19612, "ar-act-fix-", {
     answerOn: "escalation",
     reply: async (svc) => {
       const me = svc.roomService.getIdentity();
-      await svc.gateway.sendChat(svc.__probeRoom, { text: "【小麦 自检】收到，已开工", human: false });
+      await svc.gateway.sendChat(svc.__probeRoom, { text: "【B 自检】收到，已开工", human: false });
     },
   });
   const { svc, messages } = probe;
@@ -400,7 +400,7 @@ guarded("0.1.47 runtime: a wake that starts NOTHING is escalated ONCE — and th
   try {
     const room = await svc.gateway.createRoom({ title: "Act escalation", type: "persistent" });
     svc.__probeRoom = room.roomId;
-    const author = { agentId: SELF_JIE, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() };
+    const author = { agentId: SELF_JIE, nickname: "A", capabilities: [], createdAt: new Date().toISOString() };
     svc.roomService.joinOwnedRoom(room.roomId, author, {});
     const me = svc.roomService.getIdentity();
     const woken = await dispatchMentionTo(svc, room, author);
@@ -412,7 +412,7 @@ guarded("0.1.47 runtime: a wake that starts NOTHING is escalated ONCE — and th
     console.log(`  [before] dispatches=${stats.dispatches} accepted=${stats.accepted} started=${stats.started} outputs=${stats.outputs} escalations=${stats.escalationsAttempted}`);
     assert.strictEqual(stats.dispatches, 1, "the wake was dispatched to the resident agent (0.1.45 behaviour, unchanged)");
     assert.strictEqual(stats.accepted, 1, "followup returned, so it was accepted");
-    assert.strictEqual(stats.started, 0, "and NOTHING demonstrates that a turn started — exactly 小麦's shape");
+    assert.strictEqual(stats.started, 0, "and NOTHING demonstrates that a turn started — exactly B's shape");
     assert.strictEqual(stats.outputs, 0, "the [ack] receipt is OURS: it must never be read as the model producing output");
     assert.strictEqual(stats.escalationsAttempted, 0, "the window has not closed yet");
     const before = await roomTexts(svc, room.roomId);
@@ -464,14 +464,14 @@ guarded("0.1.47 runtime: a FAILING escalation is counted, named, and never repea
   const logs = captureLogs();
   try {
     const room = await svc.gateway.createRoom({ title: "Act fail", type: "persistent" });
-    const author = { agentId: SELF_JIE, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() };
+    const author = { agentId: SELF_JIE, nickname: "A", capabilities: [], createdAt: new Date().toISOString() };
     svc.roomService.joinOwnedRoom(room.roomId, author, {});
     await dispatchMentionTo(svc, room, author);
     await new Promise((r) => setTimeout(r, 200));
 
     let stats = svc.activation.stats();
     console.log(`  [refused] ${JSON.stringify(stats)}`);
-    assert.strictEqual(stats.followupRefused, 1, "a followup that THREW must move a counter (小麦's silent stop, named)");
+    assert.strictEqual(stats.followupRefused, 1, "a followup that THREW must move a counter (B's silent stop, named)");
     assert.strictEqual(stats.accepted, 0, "nothing was handed over, so nothing may be credited as accepted");
     assert.strictEqual(stats.dispatches, 1, "the dispatch was still attempted and tracked");
     assert.ok(
@@ -513,7 +513,7 @@ guarded("0.1.47 runtime: accepted-then-silent is the TIMEOUT path, reported with
   const logs = captureLogs();
   try {
     const room = await svc.gateway.createRoom({ title: "Act timeout", type: "persistent" });
-    const author = { agentId: SELF_JIE, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() };
+    const author = { agentId: SELF_JIE, nickname: "A", capabilities: [], createdAt: new Date().toISOString() };
     svc.roomService.joinOwnedRoom(room.roomId, author, {});
     await dispatchMentionTo(svc, room, author);
     await new Promise((r) => setTimeout(r, 200));
@@ -543,7 +543,7 @@ guarded("0.1.47 runtime: a running agent is detected as STARTED and NOT escalate
   const logs = captureLogs();
   try {
     const room = await svc.gateway.createRoom({ title: "Act status", type: "persistent" });
-    const author = { agentId: SELF_JIE, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() };
+    const author = { agentId: SELF_JIE, nickname: "A", capabilities: [], createdAt: new Date().toISOString() };
     svc.roomService.joinOwnedRoom(room.roomId, author, {});
     await dispatchMentionTo(svc, room, author);
     await new Promise((r) => setTimeout(r, 200));
@@ -568,7 +568,7 @@ guarded("0.1.47: /state exposes the whole chain, flat and numeric, next to the u
   const { svc } = probe;
   try {
     const room = await svc.gateway.createRoom({ title: "Act state", type: "persistent" });
-    const author = { agentId: SELF_JIE, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() };
+    const author = { agentId: SELF_JIE, nickname: "A", capabilities: [], createdAt: new Date().toISOString() };
     svc.roomService.joinOwnedRoom(room.roomId, author, {});
     await dispatchMentionTo(svc, room, author);
     const state = await svc.browserState();
@@ -653,25 +653,25 @@ guarded("0.1.47 static guard: the escalation hangs off the sweep, is bounded by 
 
 guarded("0.1.45 + 0.1.46 regression lock: the rule, the watermark and the ack contract are unchanged", async () => {
   // 0.1.45's rule, case by case — every one of these is a 0.1.45 acceptance case.
-  const self = { agentId: SELF_JIE, nickname: "小捷" };
+  const self = { agentId: SELF_JIE, nickname: "A" };
   const cases = [
-    ["mention by nickname", { from: SELF_XM, human: false, text: "@小捷 请跑回归" }, true, "mention"],
+    ["mention by nickname", { from: SELF_XM, human: false, text: "@A 请跑回归" }, true, "mention"],
     ["mention by agentId", { from: SELF_XM, human: false, text: "收件人 " + SELF_JIE + " 请回复" }, true, "mention"],
     ["mentions[] array", { from: SELF_XM, human: false, mentions: [SELF_JIE], text: "请跑回归" }, true, "mention"],
-    ["full-width ＠ (Chinese IME)", { from: SELF_XM, human: false, text: "＠小捷 请跑回归" }, true, "mention"],
+    ["full-width ＠ (Chinese IME)", { from: SELF_XM, human: false, text: "＠A 请跑回归" }, true, "mention"],
     ["human:true fallback (no address)", { from: "01a09483-3668-7bdf-9cc2-0180f314c8cf", human: true, text: "无点名的人类指令" }, true, "human-fallback"],
     ["unaddressed human:false", { from: SELF_XM, human: false, text: "【通知】今晚全员升级" }, false, "not-addressed"],
-    ["nickname in prose is not an address", { from: SELF_XM, human: false, text: "分工：小捷、小麦各一条" }, false, "not-addressed"],
-    ["machine self-test stamp", { from: SELF_XM, human: true, mentions: [SELF_JIE], text: "小麦 0.1.45 自证 @小捷" }, false, "machine-frame"],
-    ["control frame", { from: SELF_XM, human: true, mentions: [SELF_JIE], text: "[org:exec:result] exit=0 @小捷" }, false, "control-frame"],
-    ["self-authored", { from: SELF_JIE, human: true, mentions: [SELF_JIE], text: "@小捷 我自己的话" }, false, "self-authored"],
+    ["nickname in prose is not an address", { from: SELF_XM, human: false, text: "分工：A、B各一条" }, false, "not-addressed"],
+    ["machine self-test stamp", { from: SELF_XM, human: true, mentions: [SELF_JIE], text: "B 0.1.45 自证 @A" }, false, "machine-frame"],
+    ["control frame", { from: SELF_XM, human: true, mentions: [SELF_JIE], text: "[org:exec:result] exit=0 @A" }, false, "control-frame"],
+    ["self-authored", { from: SELF_JIE, human: true, mentions: [SELF_JIE], text: "@A 我自己的话" }, false, "self-authored"],
   ];
   for (const [label, message, wakeExpected, reasonExpected] of cases) {
     const decision = decideListenWake({ message, self });
     assert.strictEqual(decision.wake, wakeExpected, `${label}: 0.1.45's admission must not have changed`);
     assert.strictEqual(decision.reason, reasonExpected, `${label}: the reason vocabulary must not have changed`);
   }
-  assert.strictEqual(isMachineSelfTestFrame("小捷升 0.1.45 自证"), true);
+  assert.strictEqual(isMachineSelfTestFrame("A升 0.1.45 自证"), true);
   // The monotonic, non-expiring watermark is untouched.
   const wm = new WakeWatermark();
   wm.mark(ROOM, 4405);
@@ -690,10 +690,10 @@ guarded("0.1.45 + 0.1.46 regression lock: the rule, the watermark and the ack co
     assert.strictEqual(ledger.allowReceipt(ROOM, 4405, t0 + 10 * ACK_RATE_LIMIT_MS), "duplicate", "0.1.46's dedupe is untouched");
     assert.strictEqual(ledger.allowReceipt(ROOM, 4406, t0), "rate-limited", "0.1.46's rate limit is untouched");
     assert.strictEqual(ledger.allowReceipt(ROOM, 4406, t0 + ACK_RATE_LIMIT_MS), "ok", "and it clears after the window");
-    const receipt = formatAckReceipt({ nickname: "小捷", agentId: SELF_JIE, seq: 4405 });
+    const receipt = formatAckReceipt({ nickname: "A", agentId: SELF_JIE, seq: 4405 });
     assert.strictEqual(isAckPlaneFrame(receipt), true);
     assert.strictEqual(
-      decideListenWake({ message: { from: SELF_JIE, human: false, text: receipt }, self: { agentId: SELF_XM, nickname: "小麦" } }).reason,
+      decideListenWake({ message: { from: SELF_JIE, human: false, text: receipt }, self: { agentId: SELF_XM, nickname: "B" } }).reason,
       "machine-frame",
       "a receipt must still wake nobody",
     );
@@ -710,7 +710,7 @@ guarded("0.1.47: the receipt is NOT posted when nothing was handed over (the one
   const logs = captureLogs();
   try {
     const room = await svc.gateway.createRoom({ title: "Act no receipt", type: "persistent" });
-    const author = { agentId: SELF_JIE, nickname: "小捷", capabilities: [], createdAt: new Date().toISOString() };
+    const author = { agentId: SELF_JIE, nickname: "A", capabilities: [], createdAt: new Date().toISOString() };
     svc.roomService.joinOwnedRoom(room.roomId, author, {});
     await dispatchMentionTo(svc, room, author);
     await new Promise((r) => setTimeout(r, 250));

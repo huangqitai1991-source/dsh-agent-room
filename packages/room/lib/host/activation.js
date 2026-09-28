@@ -13,15 +13,15 @@
  *
  * Three machines, three different failures, measured on their own logs the same evening:
  *
- *   小婷 — `POST /activate-chat` → `active-session: session-b7496a19…` → `registry dump —
+ *   D — `POST /activate-chat` → `active-session: session-b7496a19…` → `registry dump —
  *          detected=… list=[…]` → `accepted … thinking=true` → `dispatching followup … to
- *          agent agent-room-duty-01a09483…` → **`followup accepted`** → 小婷 really posted
+ *          agent agent-room-duty-01a09483…` → **`followup accepted`** → D really posted
  *          into the room. WORKS. (This is the control experiment: the code path is fine.)
- *   小麦 — `activate-chat: accepted … thinking=true` → `dispatching followup … to agent
+ *   B — `activate-chat: accepted … thinking=true` → `dispatching followup … to agent
  *          agent-room-duty-01a09461…` → **and the log simply stops.** No `followup accepted`,
  *          no error, no counter. A SILENT FAILURE, and there is nothing anywhere to say
  *          whether the turn started and died, or never started at all.
- *   小黄 — `active-session: session-7f81275b… (global fallback, … dir=false)` → `registry
+ *   C — `active-session: session-7f81275b… (global fallback, … dir=false)` → `registry
  *          dump — detected=session-7f81275b… list=[] roots=[]` → **no `accepted` and no
  *          `dispatching` line at all.** Its resident agent is not bound to a duty
  *          workspace, so the machine is STRUCTURALLY unable to accept a wake — and that
@@ -60,7 +60,7 @@
  *      flat, in `GET /state.activation.{…}` next to 0.1.45's `wake` and 0.1.46's `ack`.
  *   3. **"THIS MACHINE CANNOT ACCEPT WORK" IS A READABLE FACT.** `resolvedViaNone` /
  *      `noResidentAgent` climbing while every other `resolvedVia*` stays 0 says it from
- *      `/state` alone — no log read, no 142,000-line expedition (小黄's case).
+ *      `/state` alone — no log read, no 142,000-line expedition (C's case).
  *
  * WHAT "DEMONSTRABLY STARTED" MEANS HERE (the honest definition, not a vibe)
  *
@@ -88,7 +88,7 @@
  * The 0.1.46 ACK receipt is written by THIS PLUGIN, from this node's own identity, and it
  * lands in the room BEFORE the model does anything. Counting it as "the agent produced
  * output" would make every silent machine look productive — the exact "green signal for a
- * broken thing" failure recorded in 小捷's own review (room seq 4406: three harness
+ * broken thing" failure recorded in A's own review (room seq 4406: three harness
  * rollbacks, two of them judgement-code bugs, one release shipped with a completely broken
  * UI because "server-side all green" was read as success). So the caller filters ack-plane
  * frames and control frames out of the output evidence (`service.ts` `noteOwnReply`).
@@ -254,7 +254,7 @@ export class WakeActivation {
     }
     /**
      * The wake's `(roomId, seq)` was admitted by the rule but NO resident agent exists to
-     * hand it to — 小黄's failure. The two numbers answer different questions and are
+     * hand it to — C's failure. The two numbers answer different questions and are
      * deliberately NOT the same counter:
      * `resolvedViaNone` counts every failed resolution (a human clicking 激活聊天 on a broken
      * machine counts too), `noResidentAgent` counts only the ones that cost a real,
@@ -400,7 +400,7 @@ export class WakeActivation {
     }
     /**
      * Dispatches whose OUTPUT window has elapsed: the timeout path, named. An accepted
-     * dispatch lands in `acceptedNoOutput` (小麦's "dispatching followup … and then the log
+     * dispatch lands in `acceptedNoOutput` (B's "dispatching followup … and then the log
      * just stops"), a refused one in `refusedNoOutput`, so the two can never be confused.
      */
     dueSettlement(now = Date.now()) {

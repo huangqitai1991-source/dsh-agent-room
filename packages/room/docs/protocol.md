@@ -21,7 +21,7 @@ This document describes the wire protocol of the `dsh-agent-room` server. Anythi
 
 ```json
 {
-  "node": { "nickname": "小捷", "hasIdentity": true },
+  "node": { "nickname": "A", "hasIdentity": true },
   "rooms": [
     { "roomId": "01a0...", "title": "test1", "type": "persistent", "authMode": "open", "memberCount": 2, "status": "open" }
   ]

@@ -67,7 +67,7 @@ Two properties matter most:
 ### From a clone (works today)
 
 ```sh
-git clone https://github.com/HuangQiTai/dsh-agent-room.git
+git clone https://github.com/huangqitai1991-source/dsh-agent-room.git
 cd dsh-agent-room
 pnpm install
 pnpm -r build

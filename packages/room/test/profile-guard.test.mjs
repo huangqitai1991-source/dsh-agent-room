@@ -172,7 +172,7 @@ guarded("--repair fixes a pruned profile by extracting its own tarball (no packa
   assert.strictEqual(rows.at(-1).actions.some((a) => a.step === "tar extract" && a.ok === true), true);
   // The successful extraction is `status: 0`. Window W-D49h-1: that row used to be pushed raw, so it
   // was the ONE row in the ledger with a bare number and no family beside it -- a bare status is
-  // exactly what this file exists to stop handing out (reported by 小婷 from a real run).
+  // exactly what this file exists to stop handing out (reported by D from a real run).
   const tarRow = rows.at(-1).actions.find((a) => a.step === "tar extract");
   assert.strictEqual(tarRow.status, 0);
   assert.strictEqual(tarRow.statusHex, "0x00000000", "a status of 0 must still carry its hex");
@@ -183,7 +183,7 @@ guarded("--repair fixes a pruned profile by extracting its own tarball (no packa
 
 guarded("freezeDeclaration covers the lockfile the package manager in use actually writes", () => {
   // An npm-type profile has `package-lock.json`; a pnpm-type one has `pnpm-lock.yaml`. Freezing only the
-  // pnpm name restored the declaration without its lock on an npm machine (小婷, window W-D49h-1).
+  // pnpm name restored the declaration without its lock on an npm machine (D, window W-D49h-1).
   const { dir } = fakeHome("npmlock", { deps: {}, bundles: [] });
   writeFileSync(join(dir, "package-lock.json"), JSON.stringify({ lockfileVersion: 3, name: "p-web" }));
   const frozen = freezeDeclaration(dir);
@@ -277,7 +277,7 @@ function runNodeToFile(args, { env = {} } = {}) {
  * `process.argv[1].endsWith("profile-guard.mjs")`, so the FILE NAME decided whether the gate ran at
  * all. A copy under any other name exited 0 with zero stdout, zero stderr and zero ledger rows --
  * a green verdict from a judgement that never happened, which is exactly the silent-pass class this
- * workstream exists to remove. Reported by 小婷 with a reproduction; reproduced here before fixing.
+ * workstream exists to remove. Reported by D with a reproduction; reproduced here before fixing.
  */
 guarded("a renamed copy of the guard is an invocation, never a silent 0", () => {
   const dir = join(FIXTURE_ROOT, "namecheck");
