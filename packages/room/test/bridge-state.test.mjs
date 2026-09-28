@@ -59,6 +59,17 @@ import { Context } from "@deepseek-ai/cordis";
 import { AgentRoomService } from "../lib/host/service.js";
 
 /**
+ * This file owns a private port block. node --test runs each test FILE in its own
+ * process and the cases inside a file run in order, so a fixed block is enough —
+ * what broke before was two files sharing one: ack/liveness both took 19561 and
+ * bridge-state/wake-activation both took 19611, which is EADDRINUSE the moment the
+ * suite runs them together. Blocks are disjoint by construction; the widest file
+ * here starts 7 servers, so 100 ports leave ample room.
+ * (This file: 20400-20499.)
+ */
+const PORT_BASE = 20400;
+
+/**
  * `AR_LIB` points the suite at another build's lib directory (the 0.1.41 gate uses
  * it to run the SAME assertions against the OLD deployed build, so "the new
  * assertions fail on the old build" is a measurement and not a claim).
@@ -70,8 +81,8 @@ const libService = AR_LIB ? await import(pathToFileURL(join(AR_LIB, "host", "ser
 const ServiceClass = libService ? libService.AgentRoomService : AgentRoomService;
 
 const ROOT = SRC_ROOT ?? dirname(dirname(fileURLToPath(import.meta.url)));
-const OWNER_PORT = 19611;
-const MEMBER_PORT = 19612;
+const OWNER_PORT = PORT_BASE;
+const MEMBER_PORT = PORT_BASE + 1;
 
 let failures = 0;
 const guarded = (name, fn) =>

@@ -220,7 +220,7 @@ guarded("gate 4: an incomplete live shape and a process older than the install a
 
   const staleProcess = judge(fixture("d42"), "d42", { installMtime: 1_800_000_000, hostStart: 1_700_000_000, loadedAfterDisk: false });
   assert.strictEqual(staleProcess.exit, 1, staleProcess.out);
-  assert.match(staleProcess.out, /did not load the bytes on its disk/);
+  assert.match(staleProcess.out, /did not load the agent-room bytes on its disk/);
   assert.match(staleProcess.out, /This is D-42/);
 });
 

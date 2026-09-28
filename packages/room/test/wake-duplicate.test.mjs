@@ -46,6 +46,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 
+/**
+ * This file owns a private port block. node --test runs each test FILE in its own
+ * process and the cases inside a file run in order, so a fixed block is enough —
+ * what broke before was two files sharing one: ack/liveness both took 19561 and
+ * bridge-state/wake-activation both took 19611, which is EADDRINUSE the moment the
+ * suite runs them together. Blocks are disjoint by construction; the widest file
+ * here starts 7 servers, so 100 ports leave ample room.
+ * (This file: 20600-20699.)
+ */
+const PORT_BASE = 20600;
+
 const LIB = (() => {
   const raw = (process.env.AR_LIB ?? "../lib").replace(/\\/g, "/");
   if (raw.startsWith("file://")) return raw;
@@ -67,7 +78,7 @@ const wakeStats = (svc) =>
 const wakeStatsNum = (svc, key) => (svc.wakeWatermark ? svc.wakeWatermark.stats()[key] : key === "regressed" ? 0 : 1);
 const watermarkOf = (svc, roomId) => (svc.wakeWatermark ? svc.wakeWatermark.watermark(roomId) : undefined);
 
-const PORT = 19571;
+const PORT = PORT_BASE;
 const ROOM = "01a098a2-2015-7a1d-b5f7-9eca45afa65d"; // the production roomId
 const SELF = "01a0231b-bbe5-720a-97a4-819744eeae76"; // this node (*****)
 const REMOTE_HUMAN = "01a09483-3668-7bdf-9cc2-0180f314c8cf"; // DD

@@ -37,6 +37,17 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+/**
+ * This file owns a private port block. node --test runs each test FILE in its own
+ * process and the cases inside a file run in order, so a fixed block is enough —
+ * what broke before was two files sharing one: ack/liveness both took 19561 and
+ * bridge-state/wake-activation both took 19611, which is EADDRINUSE the moment the
+ * suite runs them together. Blocks are disjoint by construction; the widest file
+ * here starts 7 servers, so 100 ports leave ample room.
+ * (This file: 20200-20299.)
+ */
+const PORT_BASE = 20200;
+
 const LIB = (() => {
   const raw = (process.env.AR_LIB ?? "../lib").replace(/\\/g, "/");
   if (raw.startsWith("file://")) return raw;
@@ -164,7 +175,7 @@ guarded("D-20: the liveness fields reach GET /agent-room-api/state (state alone 
   const dir = await mk("state");
   let svc = null;
   try {
-    svc = new AgentRoomService(new Context(), { dataDir: dir, port: 19561, relay: "" });
+    svc = new AgentRoomService(new Context(), { dataDir: dir, port: PORT_BASE, relay: "" });
     const end = Date.now() + 8_000;
     while (Date.now() < end && !(svc.profileTimer != null && svc.listenTimer != null)) {
       await new Promise((r) => setTimeout(r, 25));

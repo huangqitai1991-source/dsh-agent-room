@@ -43,6 +43,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 
+/**
+ * This file owns a private port block. node --test runs each test FILE in its own
+ * process and the cases inside a file run in order, so a fixed block is enough —
+ * what broke before was two files sharing one: ack/liveness both took 19561 and
+ * bridge-state/wake-activation both took 19611, which is EADDRINUSE the moment the
+ * suite runs them together. Blocks are disjoint by construction; the widest file
+ * here starts 7 servers, so 100 ports leave ample room.
+ * (This file: 20300-20399.)
+ */
+const PORT_BASE = 20300;
+
 const LIB = (() => {
   const raw = (process.env.AR_LIB ?? "../lib").replace(/\\/g, "/");
   if (raw.startsWith("file://")) return raw;
@@ -56,10 +67,10 @@ const { RoomService } = await import(`${LIB}/host/room-service.js`);
 const { PeerServer } = await import(`${LIB}/host/peer-server.js`);
 const { createRouter } = await import(`${LIB}/host/web.js`);
 
-const OWNER_PORT = 19562;
-const MEMBER_PORT = 19563;
-const API_PORT = 19564;
-const DEAD_PORT = 19565; // nothing ever listens here
+const OWNER_PORT = PORT_BASE;
+const MEMBER_PORT = PORT_BASE + 1;
+const API_PORT = PORT_BASE + 2;
+const DEAD_PORT = PORT_BASE + 3; // nothing ever listens here
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const waitFor = async (fn, timeout = 10_000, step = 25) => {
@@ -166,9 +177,16 @@ guarded("D-18.A: a record whose room answers 'closed' is dropped at boot (decide
       gone,
       "a record whose room answers room-closed must be dropped: retrying it is what pinned a node to a dead room",
     );
-    assert.strictEqual(
-      (await readJoined(memberDir)).some((r) => r.roomId === room.roomId),
-      false,
+    // The drop reaches disk asynchronously, so wait for the PERSISTED state rather
+    // than reading joined.json the instant memory flips — the write is allowed to
+    // land a tick later, and asserting on it synchronously is what made this case
+    // flaky under load.
+    const persisted = await waitFor(
+      async () => !(await readJoined(memberDir)).some((r) => r.roomId === room.roomId),
+      8_000,
+    );
+    assert.ok(
+      persisted,
       "the drop must be persisted, or the next boot retries the dead room again",
     );
   } finally {

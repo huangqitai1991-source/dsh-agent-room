@@ -62,6 +62,17 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+/**
+ * This file owns a private port block. node --test runs each test FILE in its own
+ * process and the cases inside a file run in order, so a fixed block is enough —
+ * what broke before was two files sharing one: ack/liveness both took 19561 and
+ * bridge-state/wake-activation both took 19611, which is EADDRINUSE the moment the
+ * suite runs them together. Blocks are disjoint by construction; the widest file
+ * here starts 7 servers, so 100 ports leave ample room.
+ * (This file: 20100-20199.)
+ */
+const PORT_BASE = 20100;
+
 const AR_LIB = process.env.AR_LIB;
 const libBase = AR_LIB ? pathToFileURL(join(AR_LIB, "host") + "/").href : "../lib/host/";
 
@@ -407,7 +418,7 @@ const settle = (ms = 250) => new Promise((r) => setTimeout(r, ms));
 
 guarded("0.1.46 runtime: a mention wakes the node AND posts exactly ONE receipt for that seq", async () => {
   needAck("the end-to-end receipt is the deliverable");
-  const probe = await bootAckProbe(19561, "ar-ack-receipt-");
+  const probe = await bootAckProbe(PORT_BASE, "ar-ack-receipt-");
   const { svc, dispatches } = probe;
   const lines = [];
   const realError = console.error;
@@ -488,7 +499,7 @@ guarded("0.1.46 runtime: a mention wakes the node AND posts exactly ONE receipt 
 
 guarded("0.1.46 runtime: NO receipt for a denied wake, and none when the wake is skipped", async () => {
   needAck("a receipt for a message that woke nobody would be a lie");
-  const probe = await bootAckProbe(19562, "ar-ack-deny-");
+  const probe = await bootAckProbe(PORT_BASE + 1, "ar-ack-deny-");
   const { svc, dispatches } = probe;
   const lines = [];
   const realError = console.error;
@@ -576,7 +587,7 @@ guarded("0.1.46 runtime: NO receipt for a denied wake, and none when the wake is
 
 guarded("0.1.46 runtime: the sender's side — receipts observed, absence named in the room, /state.ack exposed", async () => {
   needAck("requirement 3+4: visible as data, and the absence made observable");
-  const probe = await bootAckProbe(19563, "ar-ack-sender-");
+  const probe = await bootAckProbe(PORT_BASE + 2, "ar-ack-sender-");
   const { svc } = probe;
   const lines = [];
   const realError = console.error;
@@ -656,7 +667,7 @@ guarded("0.1.46 runtime: the sender's side — receipts observed, absence named 
 
     // (5) Requirement 6: a receipt whose room write FAILS is counted, and the handling is
     // unaffected (the wake already happened before the receipt is attempted).
-    const broken = await bootAckProbe(19564, "ar-ack-fail-");
+    const broken = await bootAckProbe(PORT_BASE + 3, "ar-ack-fail-");
     try {
       const brokenSvc = broken.svc;
       const room2 = await brokenSvc.gateway.createRoom({ title: "Ack fail", type: "persistent" });

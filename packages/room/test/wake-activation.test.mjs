@@ -60,6 +60,17 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+/**
+ * This file owns a private port block. node --test runs each test FILE in its own
+ * process and the cases inside a file run in order, so a fixed block is enough —
+ * what broke before was two files sharing one: ack/liveness both took 19561 and
+ * bridge-state/wake-activation both took 19611, which is EADDRINUSE the moment the
+ * suite runs them together. Blocks are disjoint by construction; the widest file
+ * here starts 7 servers, so 100 ports leave ample room.
+ * (This file: 20500-20599.)
+ */
+const PORT_BASE = 20500;
+
 const AR_LIB = process.env.AR_LIB;
 const libBase = AR_LIB ? pathToFileURL(join(AR_LIB, "host") + "/").href : "../lib/host/";
 
@@ -352,7 +363,7 @@ const roomTexts = async (svc, roomId) =>
 
 guarded("0.1.47 runtime: NO RESIDENT AGENT is reported AS SUCH and moves a counter (CC's machine)", async () => {
   needActivation("this is the failure that cost a whole day: a machine that cannot accept work");
-  const probe = await bootActProbe(19611, "ar-act-noagent-", { agents: "empty" });
+  const probe = await bootActProbe(PORT_BASE, "ar-act-noagent-", { agents: "empty" });
   const { svc } = probe;
   const logs = captureLogs();
   try {
@@ -388,7 +399,7 @@ guarded("0.1.47 runtime: NO RESIDENT AGENT is reported AS SUCH and moves a count
 
 guarded("0.1.47 runtime: a wake that starts NOTHING is escalated ONCE — and the machine then ANSWERS (BB)", async () => {
   needActivation("this is the acceptance: a machine that previously produced nothing now produces output");
-  const probe = await bootActProbe(19612, "ar-act-fix-", {
+  const probe = await bootActProbe(PORT_BASE + 1, "ar-act-fix-", {
     answerOn: "escalation",
     reply: async (svc) => {
       const me = svc.roomService.getIdentity();
@@ -459,7 +470,7 @@ guarded("0.1.47 runtime: a wake that starts NOTHING is escalated ONCE — and th
 
 guarded("0.1.47 runtime: a FAILING escalation is counted, named, and never repeated (no storm)", async () => {
   needActivation("requirement 1: 'if it cannot escalate, that must be logged and counted, never silent'");
-  const probe = await bootActProbe(19613, "ar-act-fail-", { throwOnFollowup: true });
+  const probe = await bootActProbe(PORT_BASE + 2, "ar-act-fail-", { throwOnFollowup: true });
   const { svc } = probe;
   const logs = captureLogs();
   try {
@@ -508,7 +519,7 @@ guarded("0.1.47 runtime: a FAILING escalation is counted, named, and never repea
 
 guarded("0.1.47 runtime: accepted-then-silent is the TIMEOUT path, reported with its own counter", async () => {
   needActivation("requirement 2: 'accepted but never produced output within the window'");
-  const probe = await bootActProbe(19614, "ar-act-timeout-", { answerOn: "never", status: undefined });
+  const probe = await bootActProbe(PORT_BASE + 3, "ar-act-timeout-", { answerOn: "never", status: undefined });
   const { svc } = probe;
   const logs = captureLogs();
   try {
@@ -538,7 +549,7 @@ guarded("0.1.47 runtime: accepted-then-silent is the TIMEOUT path, reported with
 
 guarded("0.1.47 runtime: a running agent is detected as STARTED and NOT escalated (the status evidence)", async () => {
   needActivation("escalating a machine that is already working would be duplicate work");
-  const probe = await bootActProbe(19615, "ar-act-status-", { answerOn: "never", status: "running" });
+  const probe = await bootActProbe(PORT_BASE + 4, "ar-act-status-", { answerOn: "never", status: "running" });
   const { svc, messages } = probe;
   const logs = captureLogs();
   try {
@@ -564,7 +575,7 @@ guarded("0.1.47 runtime: a running agent is detected as STARTED and NOT escalate
 
 guarded("0.1.47: /state exposes the whole chain, flat and numeric, next to the untouched wake/ack blocks", async () => {
   needActivation("requirement 2: specific counters on GET /agent-room-api/state");
-  const probe = await bootActProbe(19616, "ar-act-state-", { agents: "empty" });
+  const probe = await bootActProbe(PORT_BASE + 5, "ar-act-state-", { agents: "empty" });
   const { svc } = probe;
   try {
     const room = await svc.gateway.createRoom({ title: "Act state", type: "persistent" });
@@ -705,7 +716,7 @@ guarded("0.1.45 + 0.1.46 regression lock: the rule, the watermark and the ack co
 
 guarded("0.1.47: the receipt is NOT posted when nothing was handed over (the one tightening, asserted)", async () => {
   needActivation("a receipt that claims 已接手 for a refused followup would be a lie");
-  const probe = await bootActProbe(19617, "ar-act-noreceipt-", { throwOnFollowup: true });
+  const probe = await bootActProbe(PORT_BASE + 6, "ar-act-noreceipt-", { throwOnFollowup: true });
   const { svc } = probe;
   const logs = captureLogs();
   try {

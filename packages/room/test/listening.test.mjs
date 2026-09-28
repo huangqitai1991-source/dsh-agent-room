@@ -473,7 +473,10 @@ guarded("static guard: the toggle persists, the boot restores, and nothing else 
   // the same tick must not race inside the atomic writer (that would let the file
   // describe the older set and resurrect a listening flag the operator just
   // switched OFF at the next restart).
-  const writeSites = (src.match(/writeFile\(file, JSON\.stringify\(\{ rooms: snapshot \}/g) || []).length;
+  // Keyed on the intent PAYLOAD, not on the writer helper's name: the write goes
+  // through writeJsonAtomic() today, and a rename must not silently turn this
+  // guard into "found 0" (which reads like a missing write site).
+  const writeSites = (src.match(/\{ rooms: snapshot \}/g) || []).length;
   assert.strictEqual(writeSites, 1, `service.ts must have exactly one listening write site, found ${writeSites}`);
   assert.match(src, /this\.listeningSave = this\.listeningSave\s*\n\s*\.then\(/, "the write must be chained, not raced");
   assert.match(src, /this\.persistListening\(\);\s*\n\s*this\.emitBrowser\(\{ kind: "state" \}\);/);
