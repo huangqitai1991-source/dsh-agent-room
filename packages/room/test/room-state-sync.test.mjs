@@ -25,7 +25,7 @@ const TING = "01a09483-3668-7bdf-9cc2-0180f314c8cf";
 const room = () => ({
   controllerAgentId: ME,
   settings: { authMode: "open", autoMode: false, maxMembers: 12, allowHumanTakeover: true, passwordHash: "SECRET-SHOULD-NOT-LEAVE" },
-  members: [{ agentId: ME, nickname: "*****" }, { agentId: TING, nickname: "D" }],
+  members: [{ agentId: ME, nickname: "*****" }, { agentId: TING, nickname: "DD" }],
 });
 
 test("host payload carries the record and NEVER the password hash", () => {

@@ -59,8 +59,8 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 export const SCHEMA = "room-machine-facts/1";
-export const DEFAULT_CONFIG = "<workdir>\\release-gate.config.json";
-export const DEFAULT_OUT = "<workdir>\\machine-facts.json";
+export const DEFAULT_CONFIG = process.env.DSH_RELEASE_CONFIG ?? "release-gate.config.json";
+export const DEFAULT_OUT = process.env.DSH_FACTS_OUT ?? "machine-facts.json";
 export const DEFAULT_API = "http://127.0.0.1:3080/agent-org-api/exec";
 export const DEFAULT_TIMEOUT_MS = 30000;
 /** The exec plane kills at 30 s. A facts file older than this may not carry a release. */

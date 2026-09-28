@@ -57,7 +57,7 @@ const NPM_PACKED_MTIME = 499162500;
 
 function factsFile(dir, {
   schema = SCHEMA, probedAt = new Date().toISOString(), machines = null,
-  version = TARGET, id = "mai", ack = true, activation = true, loadedAfterDisk = true,
+  version = TARGET, id = "bb", ack = true, activation = true, loadedAfterDisk = true,
   libMtime = NPM_PACKED_MTIME, installMtime = 1_800_000_000, hostStart = 1_800_000_100,
   unreachable = null, extra = {},
 } = {}) {
@@ -81,13 +81,13 @@ function factsFile(dir, {
 }
 
 function config(dir, { versionFileText = `${OLD}\n` } = {}) {
-  mkdirSync(join(dir, "machines", "mai"), { recursive: true });
-  const versionFile = join(dir, "machines", "mai", "version");
+  mkdirSync(join(dir, "machines", "bb"), { recursive: true });
+  const versionFile = join(dir, "machines", "bb", "version");
   writeFileSync(versionFile, versionFileText);
   const configPath = join(dir, "config.json");
   writeFileSync(configPath, JSON.stringify({
     machinesRoot: join(dir, "machines"),
-    machines: [{ id: "mai", canary: true, address: "127.0.0.1", versionFile }],
+    machines: [{ id: "bb", canary: true, address: "127.0.0.1", versionFile }],
   }, null, 2));
   return { configPath, versionFile };
 }
@@ -102,7 +102,7 @@ function runGate(argv) {
 function judge(dir, name, factsOpts, { target = TARGET, versionFileText } = {}) {
   const { configPath, versionFile } = config(dir, versionFileText === undefined ? {} : { versionFileText });
   const facts = factsFile(dir, factsOpts);
-  const r = runGate(["canary", "--version", target, "--machine", "mai", "--config", configPath,
+  const r = runGate(["canary", "--version", target, "--machine", "bb", "--config", configPath,
     "--ledger", join(dir, "ledger.jsonl"), "--facts", facts]);
   return { ...r, versionFile, configPath, facts };
 }
@@ -134,13 +134,13 @@ guarded("parseRawBlock requires the header and every required field, and says wh
 });
 
 guarded("the REAL probe reply captured from live hardware still parses (and yields 0.1.49)", () => {
-  const live = "<workdir>\\_facts-proof\\raw-huang-verified.txt";
+  const live = process.env.DSH_FACTS_PROOF ?? join(dirname(fileURLToPath(import.meta.url)), "..", "..", "_facts-proof", "raw-verified.txt");
   if (!existsSync(live)) return;                       // the suite stays portable; the check runs where the evidence is
   const parsed = parseRawBlock(readFileSync(live, "utf8"));
   assert.strictEqual(parsed.ok, true, parsed.reason);
   assert.strictEqual(parsed.fields.plugin, "0.1.49");
   assert.strictEqual(parsed.fields.installKind, "symlink");
-  const row = deriveFacts(parsed.fields, { id: "huang", via: "from-raw" });
+  const row = deriveFacts(parsed.fields, { id: "CC", via: "from-raw" });
   assert.strictEqual(row.loadedAfterDisk, true);
   assert.deepStrictEqual(row.shape, { ack: true, activation: true });
 });
@@ -156,17 +156,17 @@ guarded("install time is max(package dir, newest file) -- npm's 1985 file stamp 
     libMtime: String(NPM_PACKED_MTIME), pkgDirMtime: "1800000000",
     hostPid: "4242", now: "1800000300", etimeSec: "299",
   };
-  const row = deriveFacts(fields, { id: "mai", via: "fixture" });
+  const row = deriveFacts(fields, { id: "bb", via: "fixture" });
   assert.strictEqual(row.installMtime, 1_800_000_000, "the package dir time is the real install time");
   assert.strictEqual(row.hostStart, 1_800_000_001);
   assert.strictEqual(row.loadedAfterDisk, true);
 
   // a process that started BEFORE the install must not pass
-  const old = deriveFacts({ ...fields, etimeSec: "3600" }, { id: "mai", via: "fixture" });
+  const old = deriveFacts({ ...fields, etimeSec: "3600" }, { id: "bb", via: "fixture" });
   assert.strictEqual(old.loadedAfterDisk, false, "D-42: the running process predates the bytes on disk");
 
   // without a readable process start the answer is UNKNOWN, never "fine"
-  const unknown = deriveFacts({ ...fields, etimeSec: "", etime: "" }, { id: "mai", via: "fixture" });
+  const unknown = deriveFacts({ ...fields, etimeSec: "", etime: "" }, { id: "bb", via: "fixture" });
   assert.strictEqual(unknown.hostStart, null);
   assert.strictEqual(unknown.loadedAfterDisk, null);
 });
@@ -184,7 +184,7 @@ guarded("loadFacts reports a missing file and unreadable JSON instead of throwin
 guarded("gate 4: no --facts is REFUSED, and a hand-written version file alone can NEVER allow", () => {
   const dir = fixture("no-facts");
   const { configPath, versionFile } = config(dir, { versionFileText: `${TARGET}\n` });  // typed to the target!
-  const r = runGate(["canary", "--version", TARGET, "--machine", "mai", "--config", configPath,
+  const r = runGate(["canary", "--version", TARGET, "--machine", "bb", "--config", configPath,
     "--ledger", join(dir, "ledger.jsonl")]);
   assert.strictEqual(r.exit, 1, r.out);
   assert.match(r.out, /no --facts file was given/);
@@ -204,9 +204,9 @@ guarded("gate 4: facts with the wrong schema, or that are stale, are REFUSED by 
 });
 
 guarded("gate 4: a canary missing from the facts, or marked unreachable, is REFUSED naming the reason", () => {
-  const absent = judge(fixture("absent"), "absent", { machines: [{ id: "jie", via: "fixture", pluginVersion: TARGET }] });
+  const absent = judge(fixture("absent"), "absent", { machines: [{ id: "aa", via: "fixture", pluginVersion: TARGET }] });
   assert.strictEqual(absent.exit, 1, absent.out);
-  assert.match(absent.out, /no row for the designated canary mai \(rows: jie\)/);
+  assert.match(absent.out, /no row for the designated canary bb \(rows: aa\)/);
 
   const unreachable = judge(fixture("unreachable"), "unreachable", { unreachable: "the probe command was killed at the 30s limit" });
   assert.strictEqual(unreachable.exit, 1, unreachable.out);
@@ -228,14 +228,14 @@ guarded("gate 4: a hand-typed version file that DISAGREES with the measurement i
   const dir = fixture("disagree");
   const r = judge(dir, "disagree", { version: TARGET }, { versionFileText: `${OLD}\n` });
   assert.strictEqual(r.exit, 1, r.out);
-  assert.match(r.out, /hand-written version file for mai says "0\.1\.50" while the machine was measured RUNNING 0\.1\.51/);
+  assert.match(r.out, /hand-written version file for bb says "0\.1\.50" while the machine was measured RUNNING 0\.1\.51/);
 });
 
 guarded("gate 4: a hand-typed version file that AGREES is not needed, and fresh facts on target allow", () => {
   const dir = fixture("allow");
   const r = judge(dir, "allow", { version: TARGET }, { versionFileText: `${TARGET}\n` });
   assert.strictEqual(r.exit, 0, r.out);
-  assert.match(r.out, /RELEASE GATE canary ALLOWED: canary mai is RUNNING 0\.1\.51/);
+  assert.match(r.out, /RELEASE GATE canary ALLOWED: canary bb is RUNNING 0\.1\.51/);
   assert.match(r.out, /hand-written file agrees .* and was not needed/);
 });
 

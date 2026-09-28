@@ -128,7 +128,7 @@
    **系统级兜底（2026-09-12 已部署）**：`/etc/systemd/system/dsh-relay.service.d/memory.conf`
    设了 `MemoryHigh=256M` / `MemoryMax=384M`，配合原有的 `Restart=always` / `RestartSec=3`：
    中继一旦涨到上限就被 cgroup 杀掉并在 3 秒内自动重启。
-   **中继是无状态的，被杀是廉价的** —— 所有成员会自己重连（已实测：重启中继后C自动恢复）。
+   **中继是无状态的，被杀是廉价的** —— 所有成员会自己重连（已实测：重启中继后CC自动恢复）。
    正常稳态约 60MB，离 384MB 上限很远，不应触发；若哪天看到
    `journalctl -u dsh-relay.service` 里有 `oom-kill`，说明又有新的内存增长源。
    日志轮转也已配好（`/etc/logrotate.d/dsh-relay`，每周、留 4 份；配置文件权限必须是 644，

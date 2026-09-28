@@ -107,7 +107,7 @@ const stateNodes = () => [
   { id: "c1", kind: "company", name: "AI 工作室", parentId: null, agentId: "01a0231b-bbe5-720a-97a4-819744eeae76", leaderAgentId: "01a0231b-bbe5-720a-97a4-819744eeae76" },
   { id: "d1", kind: "department", name: "总部", parentId: "c1" },
   { id: "m1", kind: "member", name: "主控·总控", parentId: "d1", agentId: "01a0231b-bbe5-720a-97a4-819744eeae76" },
-  { id: "m2", kind: "member", name: "A·助理", parentId: "d1", agentId: "01a0281a-52de-7c4d-a1e9-7e6db367d3dd" },
+  { id: "m2", kind: "member", name: "AA·助理", parentId: "d1", agentId: "01a0281a-52de-7c4d-a1e9-7e6db367d3dd" },
   { id: "t1", kind: "team", name: "复核组", parentId: "d1" },
 ];
 
@@ -123,9 +123,9 @@ test("the payload the host builds is drawn as a tree: company -> department -> m
   assert.match(text, /总部/);
   assert.match(text, /负责人/, "the company leader is derived, not invented");
   assert.match(text, /成员/);
-  assert.match(text, /A·助理/);
+  assert.match(text, /AA·助理/);
   assert.ok(text.indexOf("AI 工作室") < text.indexOf("总部"), "the company is drawn first");
-  assert.ok(text.indexOf("总部") < text.indexOf("A·助理"), "children follow their parent");
+  assert.ok(text.indexOf("总部") < text.indexOf("AA·助理"), "children follow their parent");
   assert.match(text, /└─ /, "the tree must be drawn with connectors, not a flat list");
 });
 
@@ -265,7 +265,7 @@ test("the mounted panel shows the three remaining sections and no removed one", 
   assert.match(text, /组织架构（只读）/);
   assert.match(text, /我能看到的下级任务汇总/);
   assert.match(text, /AI 工作室/);
-  assert.match(text, /A·助理/);
+  assert.match(text, /AA·助理/);
   assert.match(text, /负责人/);
   for (const gone of ["新增部门", "设置上级", "加部门", "加团队", "加成员", "删除", "设上级", "换上级", "选择部门"]) {
     assert.doesNotMatch(text, new RegExp(gone), `the panel still shows ${gone}`);

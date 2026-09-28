@@ -7,8 +7,8 @@
 |---|---|---|
 | 升级动作 | 派发后 `startWindowMs=20 s` 内无任何「已开始」证据 → 插件用**同一条** `activate-chat` 提示词与同一套常驻 agent 解析**自己做一次**（每次派发**最多一次**） | **0.1.47** |
 | 链可观测 | 规则 / 派发 / 会话解析（含**解析路径**）/ followup 接受或拒绝 / 真正开始（含**证据种类**）/ 本机产出 —— 每步一个扁平计数 | **0.1.47** |
-| 结构性不能干活 | `activation.noResidentAgent` + `resolvedViaNone`（其余 `resolvedVia*` 全 0）+ `lastResidentOk:0` ⇒ **只读 `/state` 就能判定这台机收不了活**（C现场） | **0.1.47** |
-| 静默停止 | B式「`dispatching followup` 之后什么都没有」＝ `acceptedNoOutput`（窗口超时）+ 一行 `ACCEPTED BUT NO OUTPUT`；被拒＝`followupRefused` / `refusedNoOutput`（两个桶永不混） | **0.1.47** |
+| 结构性不能干活 | `activation.noResidentAgent` + `resolvedViaNone`（其余 `resolvedVia*` 全 0）+ `lastResidentOk:0` ⇒ **只读 `/state` 就能判定这台机收不了活**（CC现场） | **0.1.47** |
+| 静默停止 | BB式「`dispatching followup` 之后什么都没有」＝ `acceptedNoOutput`（窗口超时）+ 一行 `ACCEPTED BUT NO OUTPUT`；被拒＝`followupRefused` / `refusedNoOutput`（两个桶永不混） | **0.1.47** |
 | 不回归 | 0.1.45 规则行为 + 0.1.46 回执契约 **逐条回归锁**（新旧双跑均绿）；`GET /state` 的 `wake`/`ack` 两块**一个键不动** | **0.1.47** |
 | 卡 | `<workdir>\card-09-wake-activation.md`（方案卡 ⑨，含旧/新门禁原始输出与现场证明） | 本版同步 |
 
@@ -24,9 +24,9 @@
 
 | 机器 | 日志链（原文节选） | 结论 |
 |---|---|---|
-| D | `active-session: session-b7496a19…` → `activate-chat: registry dump — detected=… list=[…]` → `accepted … thinking=true` → `dispatching followup … to agent agent-room-duty-01a09483…` → **`followup accepted`** → 房间里真出现 `【D 自检 · 版本判定】…` | **通的**（对照组：这条代码路径本身没问题） |
-| B | `activate-chat: accepted … thinking=true` → `dispatching followup … to agent agent-room-duty-01a09461…` → **日志就停在这里**，没有 `followup accepted`、没有报错、没有计数 | **静默失败** |
-| C | `active-session: session-7f81275b… (global fallback, cwd=…, dir=false)` → `registry dump — detected=session-7f81275b… list=[] roots=[]` → **连 `accepted` 和 `dispatching` 都没有** | **结构性收不了活**（常驻 agent 没有绑到值守工作区），而 `/state` 上它和健康机一模一样 |
+| DD | `active-session: session-b7496a19…` → `activate-chat: registry dump — detected=… list=[…]` → `accepted … thinking=true` → `dispatching followup … to agent agent-room-duty-01a09483…` → **`followup accepted`** → 房间里真出现 `【DD 自检 · 版本判定】…` | **通的**（对照组：这条代码路径本身没问题） |
+| BB | `activate-chat: accepted … thinking=true` → `dispatching followup … to agent agent-room-duty-01a09461…` → **日志就停在这里**，没有 `followup accepted`、没有报错、没有计数 | **静默失败** |
+| CC | `active-session: session-7f81275b… (global fallback, cwd=…, dir=false)` → `registry dump — detected=session-7f81275b… list=[] roots=[]` → **连 `accepted` 和 `dispatching` 都没有** | **结构性收不了活**（常驻 agent 没有绑到值守工作区），而 `/state` 上它和健康机一模一样 |
 
 **为什么这是一个真缺陷，而不是「机器慢」**：`agent.followup` 的同步返回值**证明不了任何事**。读 harness 源码第一手（`dsh-agent-loop/lib/index.js:396`）：
 
@@ -83,7 +83,7 @@ wakeDriver(wakeAfterAbort = false) {
 
 ## 3. 为什么这样修（一条一条给理由）
 
-1. **为什么必须由插件自己升级，而不是再发一条房间消息催。** 触发条件在**目标机本地**（「我派发出去 20 s 了，我自己的 agent 没有任何动静」），发送侧看不见；而唯一的等价动作（`activate-chat`：解析常驻 agent + 发一条**要求回复**的提示词）**插件已经拥有**（`buildActivatePromptFor`，`service.ts:932`）。不让它自己做，就等于「必须有人在浏览器上点一下」才算能干活 —— 现场正是这样：D是D（房主）手动点出来的。
+1. **为什么必须由插件自己升级，而不是再发一条房间消息催。** 触发条件在**目标机本地**（「我派发出去 20 s 了，我自己的 agent 没有任何动静」），发送侧看不见；而唯一的等价动作（`activate-chat`：解析常驻 agent + 发一条**要求回复**的提示词）**插件已经拥有**（`buildActivatePromptFor`，`service.ts:932`）。不让它自己做，就等于「必须有人在浏览器上点一下」才算能干活 —— 现场正是这样：DD是DD（房主）手动点出来的。
 2. **为什么「升级」用的是同一条提示词、同一套解析。** 「等价于 activate-chat」如果换一套词，就是另一个更弱的东西戴了同一个名字。所以提示词走 `buildActivatePromptFor`（**和手动按钮同一个函数**），常驻 agent 走 `resolveResidentAgent`（**和手动按钮同一个函数**）。
 3. **为什么**不**设 `activateThinkingRooms`（**这是本版唯一一处刻意的「不做」**）。** 那个标志是浏览器**一次性按钮**的状态：它会 409 掉人类的下一次点击（`web.ts:160`）。后台升级去占它，既会让人的点击失败，又会让「自动升级」和「用户点的」在 UI 上**无法区分**。区分它们的责任交给计数（`escalationsAttempted`），UI 状态仍然属于用户。这一条写在 §10 第 4 条。
 4. **为什么窗口是 20 s，而「没产出」的窗口是 120 s。** 20 s：本车队唯一实测的「唤醒 → 起转」延迟是 **0.39 s**（card 04 §2，从 142 份 transcript / 415,737 帧里量出来的），20 s 是它的 ≥50 倍，同时**故意小于** `listenPending` 重臂 60 s 与 0.1.46 的 `ACK_WINDOW_MS=120 s`，使升级发生在「这条派发仍是最近一件事」的时候。120 s：**与发送侧判定「没人回执」的窗口同一个数**（`ack.ts:88` 的推导：≤30 s sweep + 30 s pendingSkip + 25–45 s 实测中继往返），如果比它更早宣布「没产出」，两个关于同一件事的计数就会互相打架。
@@ -92,7 +92,7 @@ wakeDriver(wakeAfterAbort = false) {
    - `status`：harness 自己的相位 getter（`agent.status === "running"`），最锐利；
    - `transcript`：该会话 transcript 在派发之后被写过（`<DSH_HOME>/sessions/<ws>/<sessionId>/session.jsonl.zstd` mtime，本仓 `detectActiveSessionId` 已经在读同一个约定），作为**没有暴露 status 的 handle 的兜底**；
    - `output`：本机自己发的消息落进房间（唤醒提示词要求用 `room_send` 回话），**最强**，因为它是人读房间就能看见的那一条。
-7. **为什么回执**不算**产出（这条是本版最重要的一条防假阳性）。** `[ack]` 是**插件**用自己的身份、在模型做任何事**之前**写进房间的。把它算成「agent 产出了」，就会让每一台静默机器都看起来在干活 —— 与 A 自己复盘出来的失效模式（三次 harness 回滚里两次是**判定代码**的 bug；「服务端全绿 ⇒ 宣布成功」发布过 UI 完全坏掉的版本）是同一个家族。所以 `noteOwnReply` 里**显式排掉** `isAckPlaneFrame` 与 `isControlFrame`（`service.ts:1051`，静态守卫锁住）。
+7. **为什么回执**不算**产出（这条是本版最重要的一条防假阳性）。** `[ack]` 是**插件**用自己的身份、在模型做任何事**之前**写进房间的。把它算成「agent 产出了」，就会让每一台静默机器都看起来在干活 —— 与 AA 自己复盘出来的失效模式（三次 harness 回滚里两次是**判定代码**的 bug；「服务端全绿 ⇒ 宣布成功」发布过 UI 完全坏掉的版本）是同一个家族。所以 `noteOwnReply` 里**显式排掉** `isAckPlaneFrame` 与 `isControlFrame`（`service.ts:1051`，静态守卫锁住）。
 8. **为什么升级只做一次，而且「只做一次」写在**结构**里而不是写在注释里。** `dueEscalation()` 自己把条目标成「已升级」（`activation.ts:441`），所以后续 tick、十分钟后的 tick、任何调用方都不可能再发一次。失败也一样只记一次（`escalationsFailed`），**不重试**：一个失败的升级再试一遍，就是把「静默」换成「风暴」。
 9. **为什么待结算的两个桶必须分开**（`acceptedNoOutput` / `refusedNoOutput`）。「接了活但没动」和「没人接活」是两种完全不同的故障，处置也不同（前者查模型/会话，后者查绑定/注册表）。合成一个数，等于把本版要消灭的那种含混重新造出来。
 10. **为什么拒绝跟进（followup 抛异常）之后仍然允许升级，而且**不发**回执。** 拒绝**不是**「已开始」（第 6 条），所以窗口照样适用：这给了插件一次机会去**重新解析**一个活着的常驻 agent 并把活交出去。而回执的语义是 `已接手`——对一次没发生的交接发「已接手」，就是 0.1.46 自己要消灭的那类假信号（§5.5）。
@@ -135,7 +135,7 @@ PS> node <workdir>\_fix-47\gate-wake-activation.mjs "C:\work\项目\dsh-agent-ro
 ```
     host/activation.js present: NO  <-- this is the OLD-build condition
 
-FAIL  E / 'no resident agent' is reported AS SUCH and moves a counter (C's machine)
+FAIL  E / 'no resident agent' is reported AS SUCH and moves a counter (CC's machine)
    dispatch seq=1
    LOG (this machine) : ["[agent-room] activate-chat: NO resident agent (registry=present, agents.list()=0)",
                          "[agent-room] listening: no resident agent for 01a0a3b9-…"]
@@ -143,10 +143,10 @@ FAIL  E / 'no resident agent' is reported AS SUCH and moves a counter (C's machi
    /state.activation  : null  <-- absent
    ← 只有一行日志；没有任何计数、没有升级、没有回执，/state 里什么都没有
 
-FAIL  F / a wake that starts NOTHING is escalated, and the machine then ANSWERS (B)
+FAIL  F / a wake that starts NOTHING is escalated, and the machine then ANSWERS (BB)
    dispatch seq=1  handoffs=1
    ROOM (before window) : ["【派活】@***** 请跑回归","[ack] ***** 已接手 seq=1"]
-   LOG (before window)  : ["… listening: woken seq=1 in 01a0a3b9-… (from=A, rule=mention, mentions[]=01a0a3b9-…)"]
+   LOG (before window)  : ["… listening: woken seq=1 in 01a0a3b9-… (from=AA, rule=mention, mentions[]=01a0a3b9-…)"]
    (this build has no sweepActivation — the tick that would escalate does not exist)
    handoffs             : 1
    ROOM (after window)  : ["【派活】@***** 请跑回归","[ack] ***** 已接手 seq=1"]     ← 房间一字未增
@@ -169,7 +169,7 @@ PASS  F … LOG (after window): "wake-escalate: … seq=1 produced NO evidence o
                                 activate-chat prompt (same resolution + same prompt as the manual button: agent=session-gate-probe, via=config)"
                              "wake-escalate: SENT seq=1 … — activation.escalationsSucceeded counts it"
                              "listening: OWN OUTPUT landed in … (seq=3 after the wake at seq=1, waited 0s) — the chain reached its last step"
-        ROOM (after window) : ["【派活】@***** 请跑回归","[ack] ***** 已接手 seq=1","【B 自检】收到，已开工"]
+        ROOM (after window) : ["【派活】@***** 请跑回归","[ack] ***** 已接手 seq=1","【BB 自检】收到，已开工"]
         activation          : {"dispatches":1,"accepted":2,"started":1,"startedByOutput":1,"outputs":1,
                                "escalationsAttempted":1,"escalationsSucceeded":1,"acceptedNoOutput":0,"pending":0,…}
 PASS  G … 3 轮更晚的 sweep 之后 escalationsAttempted 仍是 1；LOG 里「escalate: REFUSED」只有一行
@@ -233,10 +233,10 @@ SUITES=21  TESTS=152  PASS=152  FAIL=0
 
 现场原始输出**写在卡里**（`<workdir>\card-09-wake-activation.md` §6），本节只写纪律与判据：
 
-- **旧侧现场复现（升级前，B仍在 0.1.46）**：控制机 `POST /rooms/01a098a2-…/chat {"human":false}` 点名 B → `seq=4538 woken=1`；B自己的日志：`listening: woken seq=4538 … (from=*****, rule=mention)` + `ack: receipt posted … line="[ack] B 已接手 seq=4538"`；B `/state`：`activation=null`，`wake.woken:1→2`，`ack.maxAckedSeq=4538`；房间：**除那条插件自己的 `[ack]` 外，B没有再产出一行**。⇒ 旧版「唤醒到了、回执回了、什么也没产生」在真机上逐字复现。
-- **新侧现场验收**：B升级 0.1.47 后同一动作重做一次（新 seq），要求看到链上每一步的行、计数移动、以及**B真的产出**（或如果仍然不能，新计数**精确说出是哪一步失败**）。卡里贴原始行。
-- **现场结果（不美化）**：链是通的、升级确实触发（`escalationsAttempted=2 / escalationsSucceeded=2`），但**B仍然没有回话**：`activation: ACCEPTED BUT NO OUTPUT seq=4655 … 120s` + `acceptedNoOutput=1`。⇒ 本版把问题从「插件看不见」推进到「**常驻 agent 收下了活却不跑**」，而这一步的根因由并轨的另一条现场定位给出（账本 **D-37**：`ensureDutyAgent()` 在没有活会话可镜像时 `provider/model` 留空 ⇒ 值守会话**没有模型**，回合永远不会开始 —— 而 `followup` 是同步入队，所以 0.1.46/0.1.47 的 `accepted` 行**都会照常打印**）。本版新增的 `started` / `startedBy*` / `acceptedNoOutput` 就是 D-37 建议的那个共同判据：**「接下了 ≠ 回合开始了」**。
-- 控制机纪律：**没有**重启/升级控制机（本会话所在）；**没有**碰房主D；**没有**碰C（另一路在修它的绑定）；本版只安装到**允许触碰的**B与A。
+- **旧侧现场复现（升级前，BB仍在 0.1.46）**：控制机 `POST /rooms/01a098a2-…/chat {"human":false}` 点名 BB → `seq=4538 woken=1`；BB自己的日志：`listening: woken seq=4538 … (from=*****, rule=mention)` + `ack: receipt posted … line="[ack] BB 已接手 seq=4538"`；BB `/state`：`activation=null`，`wake.woken:1→2`，`ack.maxAckedSeq=4538`；房间：**除那条插件自己的 `[ack]` 外，BB没有再产出一行**。⇒ 旧版「唤醒到了、回执回了、什么也没产生」在真机上逐字复现。
+- **新侧现场验收**：BB升级 0.1.47 后同一动作重做一次（新 seq），要求看到链上每一步的行、计数移动、以及**BB真的产出**（或如果仍然不能，新计数**精确说出是哪一步失败**）。卡里贴原始行。
+- **现场结果（不美化）**：链是通的、升级确实触发（`escalationsAttempted=2 / escalationsSucceeded=2`），但**BB仍然没有回话**：`activation: ACCEPTED BUT NO OUTPUT seq=4655 … 120s` + `acceptedNoOutput=1`。⇒ 本版把问题从「插件看不见」推进到「**常驻 agent 收下了活却不跑**」，而这一步的根因由并轨的另一条现场定位给出（账本 **D-37**：`ensureDutyAgent()` 在没有活会话可镜像时 `provider/model` 留空 ⇒ 值守会话**没有模型**，回合永远不会开始 —— 而 `followup` 是同步入队，所以 0.1.46/0.1.47 的 `accepted` 行**都会照常打印**）。本版新增的 `started` / `startedBy*` / `acceptedNoOutput` 就是 D-37 建议的那个共同判据：**「接下了 ≠ 回合开始了」**。
+- 控制机纪律：**没有**重启/升级控制机（本会话所在）；**没有**碰房主DD；**没有**碰CC（另一路在修它的绑定）；本版只安装到**允许触碰的**BB与AA。
 - **不做**「安装覆盖活进程」：升级一律走各机自己的升级脚本（它会先停服务），不手抄 `node_modules`。
 
 ---
@@ -269,14 +269,14 @@ $env:AR_LIB = $OLD; node ($REPO + "\test\wake-activation.test.mjs")     # 期望
 ## 9. 上线与回滚
 
 ```powershell
-# 1) 成员机（B / A，Windows）：先停服务再装，绝不在活进程上覆盖
+# 1) 成员机（BB / AA，Windows）：先停服务再装，绝不在活进程上覆盖
 powershell -NoProfile -ExecutionPolicy Bypass -File "<studio>\upgrade-studio.ps1" -RoomVer 0.1.47 -OrgVer 0.2.12
 # 2) 升级后三看
 #    版本：node -p "require('<profile>/node_modules/dsh-agent-room/package.json').version"   期望 0.1.47
 #    监听：GET http://127.0.0.1:3080/agent-room-api/state   该房 listening=true
 #    新键：同一条 /state 出现 `activation` 块（旧版没有这个块）
 # 3) 现场判据（控制机发、目标机看）
-#    控制机：POST /agent-room-api/rooms/<roomId>/chat {"text":"【派活】@B …","human":false}
+#    控制机：POST /agent-room-api/rooms/<roomId>/chat {"text":"【派活】@BB …","human":false}
 #    目标机：/state.activation 依次出现 dispatches=1 → accepted=1 → （20 s 后）escalationsAttempted=1 →
 #            started=1（带 startedBy* ）→ outputs=1；若始终不产出 → acceptedNoOutput=1（120 s）
 #    房间  ：机器真产出时出现它自己的那条回复（`[ack]` 不算）
@@ -301,7 +301,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<studio>\upgrade-studio.ps1
 8. **`status` 证据依赖 handle 暴露 `status`**：探针里的假 agent 与真机上的真实 agent 都支持，但**没有**穷举所有 DSH agent 句柄形态；不支持时**静默**退到 `transcript`（不会报错，也**不会**单独计数「status 不可用」）。
 9. **没有**做长稳/压测：tick 是 10 s 且空转零 IO（推导），日志上界是「每派发 ≤3 行」（派发/接受/升级）——均为**推导值**，未在真实流量下实测。
 10. **没有**验证与 agent-org 0.2.12 的交互：新增的只是 `/state` 的一个块与若干日志行，org 不读它（理论无影响，**未实测**）。
-11. **房主（D）与控制机未升级**（硬约束：不重启会话所在机，不动房主）。因此本版发布时**控制机自己的 `/state` 没有 `activation` 块**——发布当晚要看链，必须去**目标机**的 `/state` 与目标机的日志。
+11. **房主（DD）与控制机未升级**（硬约束：不重启会话所在机，不动房主）。因此本版发布时**控制机自己的 `/state` 没有 `activation` 块**——发布当晚要看链，必须去**目标机**的 `/state` 与目标机的日志。
 12. **`pendingSkips` 仍然会涨，且依旧不是健康信号**（本版未改、也未接进 activation 的判定，同 0.1.46 §10 第 7 条）。
 
 ---

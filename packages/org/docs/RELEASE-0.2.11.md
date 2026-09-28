@@ -132,7 +132,7 @@ git -C <repo> revert <commit>
    - **服务包装层用结构化断言**（源码里 `failLoud("[agent-org]"`、`ensureBackupRoot()`、`clearRefusedMarker`、
      `updateNode` 调用 G1 两个判定函数）覆盖，并在测试里写明了为什么这样做。
 2. **真实 `dsh web` 端到端未跑**：本会话硬约束禁止启停任何服务（3080 上的 `dsh web` 承载调用方会话）。
-3. **未在C（macOS）机器上真跑**：跨平台备份根只用纯函数 `assertPlatformResolvableFor(path,'darwin')` 验证。
+3. **未在CC（macOS）机器上真跑**：跨平台备份根只用纯函数 `assertPlatformResolvableFor(path,'darwin')` 验证。
 4. **不做自动补种**：卡 4.3 要求「注释与实现二选一」。我在 `boot()` 里**不**自动 seed，而把重播种交给
    `dsh-agent-room/tools/repair-identity.mjs --reseed-org --apply`（显式、可审计）。理由：自动 seed 会让每台
    新机各造一个 company 节点并广播，而 owner 判定正是 `kind:"company"` 的 `leaderAgentId`，那会制造新的 owner 争夺。

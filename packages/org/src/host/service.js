@@ -252,7 +252,7 @@ export class OrgService extends Service {
    * reachable". Node records carried `updatedAt`, which is an EDIT stamp — measured
    * frozen at 2026-09-12T14:26 while the machine was alive — so a reader had to
    * spend three exec timeouts (45s/25s/25s) plus a room ping and still ended up
-   * asking a human whether A was off duty or wedged. `lastSeenAt` answers it from
+   * asking a human whether AA was off duty or wedged. `lastSeenAt` answers it from
    * state alone, and `lastExecAt`/`lastExecOk` add "and it can actually run
    * commands".
    *
@@ -333,7 +333,7 @@ export class OrgService extends Service {
 
     // card-16: a frame that ARRIVED is the strongest proof the room is readable from here.
     // 0.2.14: keep the PEER view apart from "whoever wrote last" (our own frames are not
-    // peer evidence: measured 43/120 samples read as "self" on A), and remember WHO
+    // peer evidence: measured 43/120 samples read as "self" on AA), and remember WHO
     // announced the latest snapshot so freshness is judged against the AUTHORITY only.
     const selfId = await this.cachedSelfAgentId();
     const snapshotFrame = decodeSnapshot(text);

@@ -16,10 +16,10 @@
 
 ## 1. 根因（第一手：会话自己的转录 + 同机对照实验）
 
-### 1.1 转录里发生了什么（B，`session-a3d04dc4-…` 与 `session-c7506a90-…`，逐字）
+### 1.1 转录里发生了什么（BB，`session-a3d04dc4-…` 与 `session-c7506a90-…`，逐字）
 
 ```
-USER:: 你在房间「K family」…消息：***** 说：「【0.1.48 现场验收】@B 请只回一行：AR48-OK …」
+USER:: 你在房间「K family」…消息：***** 说：「【0.1.48 现场验收】@BB 请只回一行：AR48-OK …」
        请判断这条消息是否需要你回应或处理：
        - 需要：用 room_send 工具自然、简短地回复…
        如果没有 room_send 工具，改用 pwsh 执行 PowerShell 发送回复：Invoke-RestMethod -Method Post -Uri
@@ -56,11 +56,11 @@ function assertTempRootOutsideWorkspace(workspaceRoot, tempRoot) {
 cwd: process.env.AGENT_ROOM_WORKDIR ?? homedir(),      // ← 0.1.49 的根因本体
 ```
 
-B：`workspace=<home>`，`temp=<home>\AppData\Local\Temp` ⇒ **包含** ⇒ 抛。
+BB：`workspace=<home>`，`temp=<home>\AppData\Local\Temp` ⇒ **包含** ⇒ 抛。
 
 ### 1.3 同机对照实验（唯一变量是工作区）
 
-在**同一台机**（B）用宿主自己的 `POST /api/session.create` 建一条**工作区不是家目录**的会话
+在**同一台机**（BB）用宿主自己的 `POST /api/session.create` 建一条**工作区不是家目录**的会话
 （`C:/Users/Administrator/.dsh/agent-room/duty-workspace`），然后用 `session.prompt` 让它跑同一条 `pwsh`：
 
 ```
@@ -77,7 +77,7 @@ TOOLCALL    pwsh {"command": "Invoke-RestMethod -Method Post -Uri 'http://127.0.
 TOOLRESULT  ok=True @{seq=4925; acceptedByLocalHub=True; confirmedByOwner=True; confirmedSeq=4925; confirmNote=owner-confirmed}
 ASSISTANT   "DONE"
 TURN/END    {"turn":2,"reason":{"kind":"completed"}}
-房间         seq=4925 fromNickname=B human=false control=false   ← 真聊天行（不是 [ack]、不是 [org:*]）
+房间         seq=4925 fromNickname=BB human=false control=false   ← 真聊天行（不是 [ack]、不是 [org:*]）
 ```
 
 ⇒ **一个变量（工作区）就决定了「永远没有产出」还是「房间里出现一行真消息」。** 两层原因叠加，缺一层都不会坏：
@@ -192,9 +192,9 @@ npx tsc --noEmit 无输出；node build.mjs → built lib/host/*, lib/client.js,
 
 ---
 
-## 6. 真机现场验证（B）
+## 6. 真机现场验证（BB）
 
-判据（本版真正的验收）：**一条脚本化的 `human=false` 点名 ⇒ B在房间里出现一行真聊天**（`from` = B、不是 `[ack]`、不是 `[org:*]`）。
+判据（本版真正的验收）：**一条脚本化的 `human=false` 点名 ⇒ BB在房间里出现一行真聊天**（`from` = BB、不是 `[ack]`、不是 `[org:*]`）。
 
 现场原始行（安装 + 重启 + 点名）见卡⑨ §0.49 与账本 D-41；本版**必须在真机上跑到「房间里真的有一行」为止**，否则按 §10 的诚实边界记下来。
 
@@ -255,4 +255,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<studio>\upgrade-studio.ps1
 7. **被拒绝的旧会话不会被删除**（只拒绝、不清理）：会话目录会随着每次「每进程建一条」缓慢增长，本版**未做**回收。
 8. **`workspaceFallback`（唯一可用候选但工作区不安全）仍会被派发**，此时日志打的是 `CANNOT BE HEARD FROM …` 而不是成功行，但**插件不会因此拒绝派发**（拒绝会连「模型也许换个办法答话」的可能一起封死）。
 9. **没有**做长稳/压测：新增的是每次解析的一次目录列举 + 一次小文件读（带 64 条缓存）与每次建会话前一次 `mkdirSync`。
-10. **只在B一台真机上做本版的现场验收**；其它三台的现场结论是**同版本部署后的自证**，不是逐台根因复现。
+10. **只在BB一台真机上做本版的现场验收**；其它三台的现场结论是**同版本部署后的自证**，不是逐台根因复现。

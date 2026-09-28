@@ -22,6 +22,7 @@ import { test } from "node:test";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
@@ -44,7 +45,7 @@ import {
   stripBom,
 } from "../lib/host/safety.js";
 
-const ROOT = "<workdir>\\_bom-tests";
+const ROOT = join(tmpdir(), "dsh-agent-room-bom-tests");
 const AGENT_ID = "01a0231b-bbe5-720a-97a4-819744eeae76";
 const OTHER_ID = "01a09dac-3793-77b1-b6e8-9e4ebdb4041e";
 const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
@@ -156,7 +157,7 @@ test("NEW: a BOM is tolerated — same agentId, and the file is byte-identical",
   assert.equal(identity.agentId, AGENT_ID, "the BOM'd identity is read, not replaced");
   assert.equal(after.sha, before.sha, "sha256 unchanged");
   assert.equal(after.mtimeMs, before.mtimeMs, "mtime unchanged");
-  assert.equal(after.size, 150, "still the 147-byte body plus a 3-byte BOM");
+  assert.equal(after.size, before.size, "still the byte-identical body plus its 3-byte BOM");
   assert.deepEqual(await corruptList(backups, "identity.json"), [], "nothing was quarantined: a BOM is not damage");
 });
 
@@ -335,7 +336,7 @@ test("NEW: an identity write takes a verified timestamped backup first, and rete
 });
 
 test("NEW: the backup root is derived per platform, never a hardcoded drive letter", async () => {
-  const home = "<home>\\.dsh";
+  const home = "C:\\work\\.dsh";
   process.env.DSH_HOME = home;
   delete process.env.DSH_IDENTITY_BACKUP_DIR;
   assert.equal(resolveBackupRoot(), join(dirname(home), "identity-backups"), "a sibling of the DSH home, not inside it");
@@ -346,10 +347,10 @@ test("NEW: the backup root is derived per platform, never a hardcoded drive lett
 
   // The card's must-fix: a Windows-only root on the team's macOS node must be a
   // fatal config error, not "every identity write is refused".
-  assert.throws(() => assertPlatformResolvableFor("<workdir>\\identity-backups", "darwin"), /Windows-only path/);
+  assert.throws(() => assertPlatformResolvableFor("C:\\work\\identity-backups", "darwin"), /Windows-only path/);
   assert.throws(() => assertPlatformResolvableFor("\\\\server\\share\\backups", "darwin"), /Windows-only path/);
-  assert.doesNotThrow(() => assertPlatformResolvableFor("/Users/maishuting/.dsh-backups", "darwin"));
-  assert.doesNotThrow(() => assertPlatformResolvableFor("<workdir>\\identity-backups", "win32"));
+  assert.doesNotThrow(() => assertPlatformResolvableFor("/Users/example/.dsh-backups", "darwin"));
+  assert.doesNotThrow(() => assertPlatformResolvableFor("C:\\work\\identity-backups", "win32"));
   assert.throws(() => assertPlatformResolvableFor("relative\\path", "win32"), /not absolute/);
 
   // And the root is proven writable at boot, so an unusable one stops the node

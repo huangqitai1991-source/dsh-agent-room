@@ -88,7 +88,7 @@ function makeFixture(name) {
   }, null, 2));
   writeFileSync(config, JSON.stringify({
     machinesRoot: join(dir, "machines"),
-    machines: [{ id: "mai", address: "127.0.0.1", canary: true }],
+    machines: [{ id: "bb", address: "127.0.0.1", canary: true }],
   }, null, 2));
 
   const row = (extra) => appendFileSync(ledger, JSON.stringify({
@@ -107,7 +107,7 @@ function makeFixture(name) {
     }) + "\n"),
     seedCanary: () => appendFileSync(ledger, JSON.stringify({
       ts: `${new Date().toISOString().slice(0, 10)}T03:00:00.000Z`, version: TARGET,
-      gate: "canary", verdict: "canary_passed", actor: "mai", evidence: "mai", reason: "seeded by the suite",
+      gate: "canary", verdict: "canary_passed", actor: "bb", evidence: "bb", reason: "seeded by the suite",
     }) + "\n"),
   };
 }

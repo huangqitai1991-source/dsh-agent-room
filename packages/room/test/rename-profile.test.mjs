@@ -37,6 +37,7 @@ import { test } from "node:test";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import { Context } from "@deepseek-ai/cordis";
 import { AgentRoomService } from "../lib/host/service.js";
@@ -44,7 +45,7 @@ import { RoomService } from "../lib/host/room-service.js";
 import { createRouter } from "../lib/host/web.js";
 import { IdentityNotReadyError, InvalidNicknameError, assertValidNickname, nicknameProblem } from "../lib/host/safety.js";
 
-const ROOT = "<workdir>\\_rename-tests";
+const ROOT = join(tmpdir(), "dsh-agent-room-rename-tests");
 const AGENT_ID = "01a0231b-bbe5-720a-97a4-819744eeae76";
 const PEER_ID = "01a0281a-52de-7c4d-a1e9-7e6db367d3dd";
 const OWNED_ROOM = "01a09d61-6bff-7899-881d-b63f6434eef8";

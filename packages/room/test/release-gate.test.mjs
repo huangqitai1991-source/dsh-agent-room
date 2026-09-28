@@ -110,7 +110,7 @@ function evidenceObject(extra = {}) {
  * fact that AGREES is simply not needed, while one that disagrees must refuse (card-13 §B3 step 7).
  */
 function writeFacts(dir, {
-  version = TARGET, machine = "mai", ageSec = 0, ack = true, activation = true,
+  version = TARGET, machine = "bb", ageSec = 0, ack = true, activation = true,
   loadedAfterDisk = true, unreachable = null, pluginVersion = null, agreeVersionFile = true,
   installMtime = 1_800_000_000, hostStart = 1_800_000_100,
 } = {}) {
@@ -137,14 +137,14 @@ function writeFacts(dir, {
 function makeFixture(name) {
   const dir = join(FIXTURE_ROOT, name);
   rmSync(dir, { recursive: true, force: true });
-  mkdirSync(join(dir, "machines", "mai"), { recursive: true });
-  mkdirSync(join(dir, "machines", "jie"), { recursive: true });
+  mkdirSync(join(dir, "machines", "bb"), { recursive: true });
+  mkdirSync(join(dir, "machines", "aa"), { recursive: true });
 
   const ledger = join(dir, "release-ledger.jsonl");
   const evidence = join(dir, "evidence.json");
   const config = join(dir, "config.json");
-  const versionFile = join(dir, "machines", "mai", "version");
-  const versionFile2 = join(dir, "machines", "jie", "version");
+  const versionFile = join(dir, "machines", "bb", "version");
+  const versionFile2 = join(dir, "machines", "aa", "version");
 
   writeFileSync(evidence, JSON.stringify(evidenceObject(), null, 2));
   writeFileSync(versionFile, `${OLD}\n`);
@@ -177,7 +177,7 @@ function makeFixture(name) {
   const machine = (id, verifyScript) => ({
     id,
     address: "127.0.0.1",
-    canary: id === "mai",
+    canary: id === "bb",
     upgrade: { cmd: process.execPath, args: [scripts.upgrade] },
     postUpgradeVerify: { cmd: process.execPath, args: [verifyScript] },
     rollback: { cmd: process.execPath, args: [scripts.rollback] },
@@ -185,7 +185,7 @@ function makeFixture(name) {
   const writeConfig = (verifyScript) => {
     writeFileSync(config, JSON.stringify({
       ledger, machinesRoot: join(dir, "machines"),
-      machines: [machine("mai", verifyScript), machine("jie", verifyScript)],
+      machines: [machine("bb", verifyScript), machine("aa", verifyScript)],
     }, null, 2));
     return config;
   };
@@ -475,7 +475,7 @@ guarded("gate 4: a canary measured to be RUNNING an older version is REFUSED, an
   needGate("the canary gate must be able to refuse");
   const f = makeFixture("canary-stale");
   const facts = writeFacts(f.dir, { version: OLD });   // measured: this machine runs 0.1.50, target is 0.1.51
-  const r = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger, "--facts", facts], f.env);
+  const r = runInProcess(["canary", "--version", TARGET, "--machine", "bb", "--config", f.config, "--ledger", f.ledger, "--facts", facts], f.env);
   assert.strictEqual(r.exit, 1, r.out);
   assert.match(r.out, /RELEASE GATE canary REFUSED/);
   assert.match(r.out, /is RUNNING 0\.1\.50, not the target 0\.1\.51/);
@@ -489,9 +489,9 @@ guarded("gate 4: fresh facts on the target version with the live shape allow the
   const f = makeFixture("canary-compliant");
   f.writeConfig(f.scripts.verifyOk);
   const facts = writeFacts(f.dir, { version: TARGET });
-  const r = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger, "--facts", facts], f.env);
+  const r = runInProcess(["canary", "--version", TARGET, "--machine", "bb", "--config", f.config, "--ledger", f.ledger, "--facts", facts], f.env);
   assert.strictEqual(r.exit, 0, r.out);
-  assert.match(r.out, /RELEASE GATE canary ALLOWED: canary mai is RUNNING 0\.1\.51/);
+  assert.match(r.out, /RELEASE GATE canary ALLOWED: canary bb is RUNNING 0\.1\.51/);
   assert.match(r.out, /hostStarted \d+ >= install time \d+/);
   assert.match(r.out, /live shape ack\+activation both present/);
   const passed = ledgerLines(f.ledger).filter((r2) => r2.verdict === "canary_passed");
@@ -499,7 +499,7 @@ guarded("gate 4: fresh facts on the target version with the live shape allow the
 
   const fleet = runInProcess(["fleet", "--version", TARGET, "--ledger", f.ledger], f.env);
   assert.strictEqual(fleet.exit, 0, fleet.out);
-  assert.match(fleet.out, /RELEASE GATE fleet ALLOWED: canary passed for 0\.1\.51 on mai/);
+  assert.match(fleet.out, /RELEASE GATE fleet ALLOWED: canary passed for 0\.1\.51 on bb/);
 });
 
 guarded("gate 4: the fleet is REFUSED before any canary result exists", () => {
@@ -517,7 +517,7 @@ guarded("gate 4: a config that designates TWO canaries is REFUSED (a canary is e
   const cfg = JSON.parse(readFileSync(f.config, "utf8"));
   cfg.machines[1].canary = true;
   writeFileSync(f.config, JSON.stringify(cfg, null, 2));
-  const r = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger], f.env);
+  const r = runInProcess(["canary", "--version", TARGET, "--machine", "bb", "--config", f.config, "--ledger", f.ledger], f.env);
   assert.strictEqual(r.exit, 1, r.out);
   assert.match(r.out, /designates 2 canary machines/);
 });
@@ -526,9 +526,9 @@ guarded("gate 4: a --machine that is not the designated canary is REFUSED", () =
   needGate("the designated canary must be the only one that goes first");
   const f = makeFixture("canary-wrong-machine");
   writeFileSync(f.versionFile2, `${TARGET}\n`);
-  const r = runInProcess(["canary", "--version", TARGET, "--machine", "jie", "--config", f.config, "--ledger", f.ledger], f.env);
+  const r = runInProcess(["canary", "--version", TARGET, "--machine", "aa", "--config", f.config, "--ledger", f.ledger], f.env);
   assert.strictEqual(r.exit, 1, r.out);
-  assert.match(r.out, /--machine jie is not the designated canary \(mai\)/);
+  assert.match(r.out, /--machine aa is not the designated canary \(bb\)/);
 });
 
 /* ================================================================= test 5 */
@@ -545,7 +545,7 @@ guarded("gate 4 is READ-ONLY: a configured upgrade/rollback command is NEVER exe
   writeFileSync(f.config, JSON.stringify(cfg, null, 2));
   const facts = writeFacts(f.dir, { version: TARGET });
 
-  const r = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger, "--facts", facts], f.env);
+  const r = runInProcess(["canary", "--version", TARGET, "--machine", "bb", "--config", f.config, "--ledger", f.ledger, "--facts", facts], f.env);
   assert.strictEqual(r.exit, 0, r.out);
   assert.strictEqual(existsSync(sentinel), false,
     "the gate judged on facts and must have run no install/rollback command at all");
@@ -555,12 +555,12 @@ guarded("gate 4: facts without the live shape, and facts that are too old, are R
   needGate("the shape and the freshness of the facts must both be enforced");
   const f = makeFixture("canary-shape");
   const noActivation = writeFacts(f.dir, { version: TARGET, activation: false });
-  const r1 = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger, "--facts", noActivation], f.env);
+  const r1 = runInProcess(["canary", "--version", TARGET, "--machine", "bb", "--config", f.config, "--ledger", f.ledger, "--facts", noActivation], f.env);
   assert.strictEqual(r1.exit, 1, r1.out);
   assert.match(r1.out, /not showing the live plugin's shape \(ack=true, activation=false\)/);
 
   const stale = writeFacts(f.dir, { version: TARGET, ageSec: 3600 });
-  const r2 = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger, "--facts", stale], f.env);
+  const r2 = runInProcess(["canary", "--version", TARGET, "--machine", "bb", "--config", f.config, "--ledger", f.ledger, "--facts", stale], f.env);
   assert.strictEqual(r2.exit, 1, r2.out);
   assert.match(r2.out, /are \d+s old .*older than the 600s maximum/);
 });
@@ -646,7 +646,7 @@ guarded("release: all four gates must pass, and the ledger records the release o
   const f = makeFixture("release-composed");
 
   // 1. everything missing -> refused by the first gate that can decide
-  const bad = runInProcess(["release", "--version", TARGET, "--evidence", f.evidence, "--author", "author", "--ledger", f.ledger]);
+  const bad = runInProcess(["release", "--version", TARGET, "--evidence", f.evidence, "--author", "author", "--config", f.config, "--ledger", f.ledger]);
   assert.strictEqual(bad.exit, 1, bad.out);
   assert.match(bad.out, /RELEASE GATE (acceptance|canary) REFUSED/);
   assert.strictEqual(ledgerLines(f.ledger).filter((r) => r.verdict === "released").length, 0,
@@ -654,11 +654,11 @@ guarded("release: all four gates must pass, and the ledger records the release o
 
   // 2. canary first, then acceptance by someone else, then the release goes through
   const facts = writeFacts(f.dir, { version: TARGET });
-  const canary = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger, "--facts", facts], f.env);
+  const canary = runInProcess(["canary", "--version", TARGET, "--machine", "bb", "--config", f.config, "--ledger", f.ledger, "--facts", facts], f.env);
   assert.strictEqual(canary.exit, 0, canary.out);
   const accept = runInProcess(["accept", "--version", TARGET, "--author", "author", "--accepted-by", "reviewer-x", "--evidence", f.evidence, "--ledger", f.ledger]);
   assert.strictEqual(accept.exit, 0, accept.out);
-  const good = runInProcess(["release", "--version", TARGET, "--evidence", f.evidence, "--author", "author", "--ledger", f.ledger]);
+  const good = runInProcess(["release", "--version", TARGET, "--evidence", f.evidence, "--author", "author", "--config", f.config, "--ledger", f.ledger]);
   assert.strictEqual(good.exit, 0, good.out);
   assert.match(good.out, /RELEASE GATE all-four ALLOWED/);
   const released = ledgerLines(f.ledger).filter((r) => r.verdict === "released");
@@ -767,7 +767,7 @@ guarded("fail closed: an unreadable config REFUSES the release even when the led
   needGate("the config must be an INPUT, not an assumption");
   const f = makeFixture("config-unreadable");
   const facts = writeFacts(f.dir, { version: TARGET });
-  const canary = runInProcess(["canary", "--version", TARGET, "--machine", "mai", "--config", f.config, "--ledger", f.ledger, "--facts", facts], f.env);
+  const canary = runInProcess(["canary", "--version", TARGET, "--machine", "bb", "--config", f.config, "--ledger", f.ledger, "--facts", facts], f.env);
   assert.strictEqual(canary.exit, 0, canary.out);
   const accept = runInProcess(["accept", "--version", TARGET, "--author", "author", "--accepted-by", "reviewer-x", "--evidence", f.evidence, "--ledger", f.ledger]);
   assert.strictEqual(accept.exit, 0, accept.out);

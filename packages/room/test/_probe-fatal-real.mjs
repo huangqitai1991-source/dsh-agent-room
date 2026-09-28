@@ -21,14 +21,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import os from "node:os";
 import { pathToFileURL } from "node:url";
 import { Context } from "@deepseek-ai/cordis";
 import { AgentRoomService } from "../lib/host/service.js";
 
 const DSH_APP_BOOT =
-  "<home>\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh\\node_modules\\@deepseek-ai\\dsh-app-boot\\lib\\index.js";
+  process.env.DSH_APP_BOOT ??
+  path.join(os.homedir(), "AppData", "Roaming", "npm", "node_modules", "@deepseek-ai", "dsh", "node_modules", "@deepseek-ai", "dsh-app-boot", "lib", "index.js");
 
-const ROOT = "<workdir>\\_fatal-probe";
+const ROOT = path.join(os.tmpdir(), "dsh-agent-room-fatal-probe");
 const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
 
 fs.rmSync(ROOT, { recursive: true, force: true });

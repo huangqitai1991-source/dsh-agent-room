@@ -79,7 +79,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, 
 import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { userInfo } from "node:os";
+import { userInfo, tmpdir } from "node:os";
 import { loadFacts, SCHEMA as FACTS_SCHEMA } from "./machine-facts.mjs";
 
 let runSeq = 0;
@@ -88,8 +88,8 @@ export const EXIT_ALLOWED = 0;
 export const EXIT_REFUSED = 1;
 export const EXIT_ERROR = 2;
 
-export const DEFAULT_LEDGER = "<workdir>\\release-ledger.jsonl";
-export const DEFAULT_CONFIG = "<workdir>\\release-gate.config.json";
+export const DEFAULT_LEDGER = process.env.DSH_RELEASE_LEDGER ?? "release-ledger.jsonl";
+export const DEFAULT_CONFIG = process.env.DSH_RELEASE_CONFIG ?? "release-gate.config.json";
 /** A facts file older than this may not carry a release. 600 s = the exec plane's 30 s limit x 20. */
 export const DEFAULT_FACTS_MAX_AGE_SEC = 600;
 
@@ -435,7 +435,7 @@ export function gateAcceptance({ events, version, author }) {
  * false: D-39 records that a detached launcher can exit 0 without ever running.
  */
 function runCommand(cmd, args, { cwd = null, env = process.env, timeoutMs = 180000 } = {}) {
-  const runDir = process.env.DSH_RELEASE_RUN_DIR ?? "<workdir>\\_release-gate-run";
+  const runDir = process.env.DSH_RELEASE_RUN_DIR ?? join(tmpdir(), "dsh-agent-room-release-gate-run");
   let outFile;
   try {
     mkdirSync(runDir, { recursive: true });

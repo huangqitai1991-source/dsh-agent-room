@@ -126,19 +126,19 @@ export function wakeKindLabel(kind: ListenAuthorKind): string {
  * WHY THIS EXISTS (the silent wake-drop, measured on this fleet 2026-09-15)
  *
  * Until 0.1.44 the wake rule was `human === true`, in one form or another, since
- * 0.1.28 (C's 10-version archaeology, room seq 3703). The 0.1.41 revision added
+ * 0.1.28 (CC's 10-version archaeology, room seq 3703). The 0.1.41 revision added
  * the authorship check on top but kept `human` as the ONLY admission condition
  * (`pickListenTarget`: `if (kind === "human") return message;`). Everything else
  * fell out of the loop with no log line at all.
  *
- * The wire evidence, read from the room OWNER's store (D's
+ * The wire evidence, read from the room OWNER's store (DD's
  * `messages/01a098a2-….jsonl`, first-hand, not quoted from a report):
  *
  *   seq=3267 human=false  from=*****  ← the questionnaire, addressed to all four
  *   seq=3606 human=false  from=*****  ← the reminder for it
  *   seq=3698 human=true   from=*****  ← the same author, same channel, WOKE everyone
  *
- * and the target side (A's `C:\studio\studio.log`, 14 `listening:` lines spanning
+ * and the target side (AA's `C:\studio\studio.log`, 14 `listening:` lines spanning
  * seq 2407 → 3718, i.e. demonstrably covering the seq range of 3267 and 3606):
  * `woken seq=2407/2482/3698/3699/3715/3718`, `skipped seq=3122/3140/3500/3661/3690/
  * 3693/3704/3716 (self-authored)` — and NOT ONE line naming 3267 or 3606. Three of
@@ -171,9 +171,9 @@ export function wakeKindLabel(kind: ListenAuthorKind): string {
  * that changed the shipped rule — recorded because the first draft HAD it)
  *
  * The draft admitted every non-control message authored by the room's controller
- * (`Room.controllerAgentId`, asked of the room owner and confirmed: D, the only
+ * (`Room.controllerAgentId`, asked of the room owner and confirmed: DD, the only
  * authoritative field — the protocol has no 上级 concept, `MemberRole` is
- * owner|member @ types.ts:38). A reviewed it against real traffic (room seq 3728)
+ * owner|member @ types.ts:38). AA reviewed it against real traffic (room seq 3728)
  * and measured the consequence: **6 controller-authored messages that day
  * (seq 2942/3089/3148/3199/3225/3231) were status REPORTS, not dispatches**, and
  * every one of them would have woken all four other machines — 24 wasted wakes,
@@ -208,7 +208,7 @@ export const WAKE_ADMITTED: readonly WakeReason[] = ["mention", "human-fallback"
 export interface WakeDecision {
   wake: boolean;
   reason: WakeReason;
-  /** Which token matched, when one did (e.g. `@A in text`, `from=<controllerId>`). */
+  /** Which token matched, when one did (e.g. `@AA in text`, `from=<controllerId>`). */
   detail?: string;
 }
 
@@ -224,7 +224,7 @@ export interface WakeRuleMessage {
 /** The node the rule is deciding FOR. Deliberately minimal: the SHIPPED rule reads
  *  only what the message says and who this node is. There is no "author is the
  *  controller" input — see the header for why that clause was designed out under
- *  review (A, room seq 3728). */
+ *  review (AA, room seq 3728). */
 export interface WakeRuleSelf {
   agentId: string;
   nickname?: string;
@@ -233,7 +233,7 @@ export interface WakeRuleSelf {
 /**
  * How many room rows one sweep reads (0.1.45, raised from 20 under review).
  *
- * WHY 20 WAS TOO SMALL (C, room seq 3729 — measured, not argued): the sweep runs
+ * WHY 20 WAS TOO SMALL (CC, room seq 3729 — measured, not argued): the sweep runs
  * every 30 s (`service.ts` `setInterval(..., 30_000)`) and only ever sees the rows
  * inside its read window, so any message that falls out of that window between two
  * sweeps is neither woken for nor denied — it is never a candidate at all. With 20
@@ -258,14 +258,14 @@ export const MAX_NAMED_DENIALS_PER_SWEEP = 20;
 
 /**
  * A nickname shorter than this is never matched as a mention: two characters is
- * already the shortest real nickname in this fleet (A/C/B), and a
+ * already the shortest real nickname in this fleet (AA/CC/BB), and a
  * one-character nickname would match inside ordinary prose. The agentId path is
  * always available and has no such weakness.
  */
 export const MIN_MENTION_CHARS = 2;
 
 /**
- * A machine's self-test stamp, e.g. `A升 0.1.43 自证` / `XIAOHUANG 0.1.44 verify`
+ * A machine's self-test stamp, e.g. `AA升 0.1.43 自证` / `CC 0.1.44 verify`
  * / `verify 0.1.44`. These MUST NOT wake anyone: all five nodes run listening, so a
  * stamp that woke its readers would be a wake storm (and it is exactly the family
  * that already took a machine offline once through per-frame amplification —
@@ -304,12 +304,12 @@ export function isMachineSelfTestFrame(text: unknown): boolean {
  *   1. `mentions[]` — the owner resolves nicknames to canonical agentIds when it
  *      stores the message (room-service.ts:625-639), so this holds either form;
  *   2. `@<agentId>` / `@<nickname>` in the text, with the full-width `＠` normalised
- *      (the fleet's dispatch headers are `【A → @总控 …】`-shaped, so the `@` is
+ *      (the fleet's dispatch headers are `【AA → @总控 …】`-shaped, so the `@` is
  *      matched wherever it sits — inside 【】 and after → included);
  *   3. a bare `<agentId>` anywhere in the text — a 36-char id is unambiguous, and it
  *      makes `@总控（01a0…）` style addressing work.
  *
- * NOT matched, deliberately: a bare nickname in prose ("A说…"). That would fire on
+ * NOT matched, deliberately: a bare nickname in prose ("AA说…"). That would fire on
  * every report that merely mentions a colleague, which is the wake-storm shape.
  * Consequence, stated rather than hidden: a ROLE alias that no protocol field carries
  * (`@总控` for a node nicknamed *****) is not resolved. The supported way to be
@@ -384,7 +384,7 @@ export function decideListenWake(input: WakeRuleInput): WakeDecision {
  * over this node's own room view (roster + controller id + each member's nickname).
  * It is exactly the computation the receivers will run, on the same inputs, so it is
  * right unless a target is offline or has listening OFF. Making it a delivered
- * RECEIPT needs the ack plane (A's option C, room seq 3704 §Q6), which this
+ * RECEIPT needs the ack plane (AA's option C, room seq 3704 §Q6), which this
  * version deliberately does not ship.
  */
 export interface WakePreview {
@@ -437,7 +437,7 @@ export interface WakeWatermarkStats {
    * A message is only ever a CANDIDATE inside one sweep's read window. These three
    * counters are the difference between "the rule refused it (see the denied* block)"
    * and "the sweep never looked" — the second kind was invisible until now, which is
-   * how A's own list (#2, #3) and C's window finding (room seq 3729) stayed
+   * how AA's own list (#2, #3) and CC's window finding (room seq 3729) stayed
    * unprovable.
    */
   /** Sweeps skipped because a wake from the previous sweep was still in flight. */

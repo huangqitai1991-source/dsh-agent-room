@@ -3,7 +3,7 @@
  *
  * THE DEFECT (field, 2026-09-14)
  *
- * A held TWO member records in D's room, `joinedAt`
+ * AA held TWO member records in DD's room, `joinedAt`
  * 2026-09-14T00:46:52.281Z and 2026-09-14T00:58:31.635Z — correlating with that
  * machine's own report that its address changed twice that day. The ledger's
  * hypothesis was "each re-join appends a record instead of updating the one keyed
@@ -55,7 +55,7 @@ process.env.DSH_IDENTITY_BACKUP_DIR = process.env.DSH_IDENTITY_BACKUP_DIR
 
 const { RoomService } = await import(`${LIB}/host/room-service.js`);
 
-const MEMBER = "01a094c1-7159-7555-9222-65241c607320"; // A
+const MEMBER = "01a094c1-7159-7555-9222-65241c607320"; // AA
 const FIELD_T1 = "2026-09-14T00:46:52.281Z"; // the two joinedAt values the field showed
 const FIELD_T2 = "2026-09-14T00:58:31.635Z";
 const ADDR_LAN = "198.51.100.11:9317"; // the machine's first address
@@ -96,7 +96,7 @@ guarded("D-21: a room whose list holds two records for one agentId converges to 
     ...persisted.members,
     {
       agentId: MEMBER,
-      nickname: "A",
+      nickname: "AA",
       role: "member",
       roles: ["executor"],
       joinedAt: FIELD_T1,
@@ -104,7 +104,7 @@ guarded("D-21: a room whose list holds two records for one agentId converges to 
     },
     {
       agentId: MEMBER,
-      nickname: "A",
+      nickname: "AA",
       role: "member",
       roles: ["observer"],
       joinedAt: FIELD_T2,
@@ -164,7 +164,7 @@ guarded("D-21: three re-joins of one agentId (address changing each time) keep O
   const service = new RoomService({ dataDir: dir });
   await service.boot();
   const room = await service.createRoom({ title: "K family", type: "persistent" });
-  const agent = { agentId: MEMBER, nickname: "A", capabilities: ["pwsh"], createdAt: FIELD_T1 };
+  const agent = { agentId: MEMBER, nickname: "AA", capabilities: ["pwsh"], createdAt: FIELD_T1 };
 
   // Join #1 — the machine's first address.
   service.joinOwnedRoom(room.roomId, agent, { address: ADDR_LAN });
@@ -172,7 +172,7 @@ guarded("D-21: three re-joins of one agentId (address changing each time) keep O
   const joinedAt = afterFirst[0]?.joinedAt;
   assert.strictEqual(afterFirst.length, 1, "the first join creates exactly one record");
 
-  // Join #2 and #3 — the address changed twice, exactly as A reported.
+  // Join #2 and #3 — the address changed twice, exactly as AA reported.
   service.joinOwnedRoom(room.roomId, agent, { address: ADDR_NEW });
   service.joinOwnedRoom(room.roomId, agent, { address: ADDR_LAN });
   const rows = memberRows(service.getOwnedRoom(room.roomId), MEMBER);
@@ -203,8 +203,8 @@ guarded("D-21: a boot-time repair does not disturb a healthy list (no false posi
   const service = new RoomService({ dataDir: dir });
   await service.boot();
   const room = await service.createRoom({ title: "clean", type: "persistent" });
-  service.joinOwnedRoom(room.roomId, { agentId: MEMBER, nickname: "A", capabilities: [], createdAt: FIELD_T1 }, { address: ADDR_LAN });
-  service.joinOwnedRoom(room.roomId, { agentId: "01a09483-3668-7bdf-9cc2-0180f314c8cf", nickname: "D", capabilities: [], createdAt: FIELD_T1 }, { address: ADDR_NEW });
+  service.joinOwnedRoom(room.roomId, { agentId: MEMBER, nickname: "AA", capabilities: [], createdAt: FIELD_T1 }, { address: ADDR_LAN });
+  service.joinOwnedRoom(room.roomId, { agentId: "01a09483-3668-7bdf-9cc2-0180f314c8cf", nickname: "DD", capabilities: [], createdAt: FIELD_T1 }, { address: ADDR_NEW });
 
   const before = service.getOwnedRoom(room.roomId).members.map((m) => ({ ...m }));
   const reopened = new RoomService({ dataDir: dir });

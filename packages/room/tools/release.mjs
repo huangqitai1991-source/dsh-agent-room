@@ -60,7 +60,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { userInfo } from "node:os";
+import { userInfo, tmpdir } from "node:os";
 import { DEFAULT_CONFIG, DEFAULT_LEDGER, appendEvent, readLedger, runReleaseGate } from "./release-gate.mjs";
 
 export const EXIT_PUBLISHED = 0;
@@ -87,8 +87,8 @@ const USAGE = [
   "  --author <who>      the author of this version (default: the current user)",
   "",
   "gate inputs (forwarded to tools/release-gate.mjs):",
-  "  --ledger <file>     default <workdir>\\release-ledger.jsonl (also the publish row's home)",
-  "  --config <file>     default <workdir>\\release-gate.config.json",
+  "  --ledger <file>     default ./release-ledger.jsonl (also the publish row's home)",
+  "  --config <file>     default ./release-gate.config.json",
   "  --max <n> --override --reason <why>    version-count quota controls (reason is recorded)",
   "",
   "publishing:",
@@ -116,7 +116,7 @@ let runSeq = 0;
  * child an empty stdin (NUL) without a pipe, which is what the non-interactive ssh recipe needs.
  */
 function runCommand(cmd, args, { cwd = null, env = process.env, timeoutMs = 600000 } = {}) {
-  const runDir = process.env.DSH_RELEASE_RUN_DIR ?? "<workdir>\\_release-gate-run";
+  const runDir = process.env.DSH_RELEASE_RUN_DIR ?? join(tmpdir(), "dsh-agent-room-release-gate-run");
   let outFile;
   try {
     mkdirSync(runDir, { recursive: true });

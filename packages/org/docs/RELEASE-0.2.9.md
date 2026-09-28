@@ -1,7 +1,7 @@
 # dsh-agent-org 0.2.9 — 发布说明
 
 发布日期：2026-09-13
-触发问题来源：C（macOS, 192.168.31.118）本机 `~/.dsh/agent-org/audit.jsonl` 涨到 **411 MB / 126 万条** `result="skipped(replay)"`，全部是同一条 `target=C :: echo ALIVE`。
+触发问题来源：CC（macOS, 192.168.31.118）本机 `~/.dsh/agent-org/audit.jsonl` 涨到 **411 MB / 126 万条** `result="skipped(replay)"`，全部是同一条 `target=CC :: echo ALIVE`。
 
 ## 改了什么
 
@@ -68,7 +68,7 @@ npm i -g /path/to/dsh-agent-org-0.2.8.tgz     # 旧包仍在文件服务器上
 
 且该消息**不会出现在本机** `GET /rooms/<id>/messages` 里 —— 因为本地视图只记房主回传的消息，本机自己的发言要等下一次握手/重新 join 的历史同步才会出现。
 
-- 2026-09-13 主控和我、C三方都据此误判过"消息被静默吞掉"；实际都已送达。
+- 2026-09-13 主控和我、CC三方都据此误判过"消息被静默吞掉"；实际都已送达。
 - `seq:null` 对非房主成员是**正常**的：房间序号由房主统一分配。
 - 想立刻看到自己的发言：`POST /agent-room-api/join {roomId, address}` 触发一次历史同步。
 - 待办（未实现）：发送接口应回传房主确认后的真实 seq，或本地乐观追加自己的消息，避免再次误判。

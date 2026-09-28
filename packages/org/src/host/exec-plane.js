@@ -120,7 +120,7 @@ export class ExecPlane {
     let denyReason = decision?.reason ?? "authorization unavailable: canExec is not wired (fail-closed)";
     if (!this.canExec) this.warn("authz-unwired", "[agent-org] exec: canExec dependency missing — denying every instruction (fail-closed)");
     // 0.2.14: a stale LOCAL tree can hand out rights that a correct copy would not
-    // (measured: A's copy still had D as a lead for 2 days). Only a positive
+    // (measured: AA's copy still had DD as a lead for 2 days). Only a positive
     // `stale` verdict blocks; `unknown` is what an idle fleet reports.
     if (allowed && this.freshness) {
       const fresh = this.freshness();

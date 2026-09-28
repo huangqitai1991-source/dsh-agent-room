@@ -4,7 +4,7 @@
  * Run: node test/sync-freshness.test.mjs   (pure module: no room, no host, no clock)
  *
  * Why these cases exist (all measured on this fleet 2026-09-20):
- *   * `lastInboundFrom` is last-writer-wins INCLUDING this node: on A it read
+ *   * `lastInboundFrom` is last-writer-wins INCLUDING this node: on AA it read
  *     "self" in 43 of 120 samples (35.8%) => a single read must not be used to
  *     decide "a peer just wrote".
  *   * the fleet can be silent for 2.5 days with nothing wrong => absence of peer
@@ -100,8 +100,8 @@ test("the health view exposes the peer fields (so /agent-org-api/sync can be rea
   assert.strictEqual(view.degraded, false);
 });
 
-// 0.2.14 spec input from A: one scalar is NOT enough — three writers touched its
-// window (***** x29 / itself x43 / D x48). Per-peer stamps let a monitor ask
+// 0.2.14 spec input from AA: one scalar is NOT enough — three writers touched its
+// window (***** x29 / itself x43 / DD x48). Per-peer stamps let a monitor ask
 // "is THIS colleague reachable" without continuous sampling.
 test("per-peer stamps: a fresh peer does not hide a silent one", () => {
   const OTHER = "01a00000-0000-7000-8000-000000000003";

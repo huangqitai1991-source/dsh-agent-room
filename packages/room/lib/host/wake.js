@@ -117,7 +117,7 @@ export const WAKE_ADMITTED = ["mention", "human-fallback"];
 /**
  * How many room rows one sweep reads (0.1.45, raised from 20 under review).
  *
- * WHY 20 WAS TOO SMALL (C, room seq 3729 — measured, not argued): the sweep runs
+ * WHY 20 WAS TOO SMALL (CC, room seq 3729 — measured, not argued): the sweep runs
  * every 30 s (`service.ts` `setInterval(..., 30_000)`) and only ever sees the rows
  * inside its read window, so any message that falls out of that window between two
  * sweeps is neither woken for nor denied — it is never a candidate at all. With 20
@@ -140,13 +140,13 @@ export const WAKE_WINDOW_ROWS = 200;
 export const MAX_NAMED_DENIALS_PER_SWEEP = 20;
 /**
  * A nickname shorter than this is never matched as a mention: two characters is
- * already the shortest real nickname in this fleet (A/C/B), and a
+ * already the shortest real nickname in this fleet (AA/CC/BB), and a
  * one-character nickname would match inside ordinary prose. The agentId path is
  * always available and has no such weakness.
  */
 export const MIN_MENTION_CHARS = 2;
 /**
- * A machine's self-test stamp, e.g. `A升 0.1.43 自证` / `XIAOHUANG 0.1.44 verify`
+ * A machine's self-test stamp, e.g. `AA升 0.1.43 自证` / `CC 0.1.44 verify`
  * / `verify 0.1.44`. These MUST NOT wake anyone: all five nodes run listening, so a
  * stamp that woke its readers would be a wake storm (and it is exactly the family
  * that already took a machine offline once through per-frame amplification —
@@ -189,12 +189,12 @@ export function isMachineSelfTestFrame(text) {
  *   1. `mentions[]` — the owner resolves nicknames to canonical agentIds when it
  *      stores the message (room-service.ts:625-639), so this holds either form;
  *   2. `@<agentId>` / `@<nickname>` in the text, with the full-width `＠` normalised
- *      (the fleet's dispatch headers are `【A → @总控 …】`-shaped, so the `@` is
+ *      (the fleet's dispatch headers are `【AA → @总控 …】`-shaped, so the `@` is
  *      matched wherever it sits — inside 【】 and after → included);
  *   3. a bare `<agentId>` anywhere in the text — a 36-char id is unambiguous, and it
  *      makes `@总控（01a0…）` style addressing work.
  *
- * NOT matched, deliberately: a bare nickname in prose ("A说…"). That would fire on
+ * NOT matched, deliberately: a bare nickname in prose ("AA说…"). That would fire on
  * every report that merely mentions a colleague, which is the wake-storm shape.
  * Consequence, stated rather than hidden: a ROLE alias that no protocol field carries
  * (`@总控` for a node nicknamed *****) is not resolved. The supported way to be
