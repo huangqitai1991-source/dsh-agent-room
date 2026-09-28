@@ -55,7 +55,7 @@
 ### 4.1 门禁第 1 步 — OLD 行为（线上 3080，**改动前**跑的原始输出）
 
 ```
-PS> cd D:\dsh; node _repro-dup-push.mjs --room 01a098a2-2015-7a1d-b5f7-9eca45afa65d
+PS> cd <workdir>; node _repro-dup-push.mjs --room 01a098a2-2015-7a1d-b5f7-9eca45afa65d
 POST chat -> 200 {"ok":true,"data":{"seq":2374,"acceptedByLocalHub":true,"confirmedByOwner":true,"confirmedSeq":2374,"confirmNote":"owner-confirmed","delivered":true,"queued":false}}
 POST control -> 200 {"ok":true,"data":{"seq":2375,"acceptedByLocalHub":true,"confirmedByOwner":true,"confirmedSeq":2375,"confirmNote":"owner-confirmed","delivered":true,"queued":false}}
 
@@ -75,11 +75,11 @@ RESULT: OLD BEHAVIOUR (double push) -- reproduce this FIRST, before the fix
 
 **为什么不是 3080 的同一命令**：3080 上那个 `dsh web` 进程在启动时就把插件模块读进内存了，重建 `lib/` **不会**进入运行中的进程；让它加载新代码需要重启，而硬约束禁止启停任何服务（该进程承载调用方会话）。重建后**再跑同一条线上命令**，输出仍是 `n=2 / n=1`（即"新代码未被加载"），已如实记录于 §7.2。
 
-因此 NEW 半边用 `D:\dsh\_repro-dup-push-inproc.mjs`（**同一个判定器、同一套计数、同一条生产装配**：owner `RoomService`+`PeerServer` → 成员 `AgentRoomService.gateway.joinRoom` → `RoomClient` → `service.onBrowserEvent`，也就是 `web.ts` 写 SSE 时订阅的同一个回调）测量，并**用同一支探针跑 OLD/NEW 两次**：
+因此 NEW 半边用 `<workdir>\_repro-dup-push-inproc.mjs`（**同一个判定器、同一套计数、同一条生产装配**：owner `RoomService`+`PeerServer` → 成员 `AgentRoomService.gateway.joinRoom` → `RoomClient` → `service.onBrowserEvent`，也就是 `web.ts` 写 SSE 时订阅的同一个回调）测量，并**用同一支探针跑 OLD/NEW 两次**：
 
 ```
 --- OLD：把 0.1.38 的 lib/host/service.js 换回（改动前的构建产物）---
-PS> cd D:\dsh; node _repro-dup-push-inproc.mjs
+PS> cd <workdir>; node _repro-dup-push-inproc.mjs
 member holds a live client on 01a09ebc-… (joined, owned:false)
 send ordinary -> delivered to the browser channel
 send control  -> delivered to the local roomService bus (org plane)
@@ -99,7 +99,7 @@ browserState().dedupe = null
 RESULT: OLD BEHAVIOUR (double push) -- reproduce this FIRST, before the fix
 
 --- NEW：恢复 0.1.39 的 lib/host/service.js，重跑同一条命令 ---
-PS> cd D:\dsh; node _repro-dup-push-inproc.mjs
+PS> cd <workdir>; node _repro-dup-push-inproc.mjs
 member holds a live client on 01a09ebc-… (joined, owned:false)
 send ordinary -> delivered to the browser channel
 send control  -> delivered to the local roomService bus (org plane)
@@ -185,7 +185,7 @@ PS> node test/dedupe.test.mjs
 
 `npx tsc --noEmit` 干净（exit 0）；`node build.mjs` 成功（`built lib/host/*, lib/client.js, lib/skills/`）。
 > 说明：`backfill.e2e.mjs` 与新增的 `dedupe.test.mjs` 若把 stderr 并进 PowerShell 管道会被报 `NativeCommandError`，单独重定向时 `exit=0`；这是 PowerShell 的产物，不是测试失败（与 0.1.38 release 记录同因）。
-> 本版运行时的 stderr 有一行 `[agent-room] backup root C:\Users\scorp\identity-backups is NOT writable (EPERM …)`：本会话文件沙箱不允许写工作区之外，属**0.1.38 既有行为**（拒写而非覆盖），与本版改动无关。
+> 本版运行时的 stderr 有一行 `[agent-room] backup root <home>\identity-backups is NOT writable (EPERM …)`：本会话文件沙箱不允许写工作区之外，属**0.1.38 既有行为**（拒写而非覆盖），与本版改动无关。
 
 ## 7. 复现 OLD / 验证 NEW 的可跑判据
 
@@ -193,15 +193,15 @@ PS> node test/dedupe.test.mjs
 
 ```powershell
 # 0) 只读静态拓扑：期望 2 个 chat 发射点（未修复）/ 1 个（修复后）
-node D:\dsh\_probe-doublepush-map.mjs
+node <workdir>\_probe-doublepush-map.mjs
 
 # 1) OLD 基线（线上 3080；members 房，owned:false）
-node D:\dsh\_repro-dup-push.mjs --room 01a098a2-2015-7a1d-b5f7-9eca45afa65d
+node <workdir>\_repro-dup-push.mjs --room 01a098a2-2015-7a1d-b5f7-9eca45afa65d
 #   0.1.38 期望：seq n=2 atMs=x/x（同毫秒）、控制帧 n=1、末行 RESULT: OLD BEHAVIOUR
 #   0.1.39 期望：seq n=1、控制帧 0 条、末行 RESULT: FIX VERIFIED
 
 # 2) 进程内同路径（不依赖任何服务的启停，重建 lib 后即可跑）
-node D:\dsh\_repro-dup-push-inproc.mjs
+node <workdir>\_repro-dup-push-inproc.mjs
 #   期望：普通 n=1、controlFrame.seqCounts 为空、总线两条 n=1、RESULT: FIX VERIFIED
 
 # 3) 回归套件（逐条直跑）
@@ -222,7 +222,7 @@ node <repo>\test\dedupe-ring.test.mjs   # pass 7
 4. **`(roomId, seq)` 去重的现场观测未做**：本机的 `dedupe.skipped` 在线上仍为 0（旧模块在跑）。进程内已覆盖：重复投递同一 `(roomId, seq)` 不再推送，且 `skipped` 计数增加。
 5. **并发 join 加固（卡 T-B′）未做**：本版不涉及该路径（卡已把它降级为"不做"）。
 6. **`ringEvicted` 的生产态标定（卡 T-C）未做**：只有进程内标定（128×4096×26.27 B ≈ 13.8 MB 的推导 + 单元测试里的上限断言），生产态需要一个达到上限的活房间才能观测。
-7. **P0 之外的两处遗留**：`_probe-doublepush-map.mjs` 与 `_repro-dup-push-inproc.mjs` 在 `D:\dsh`（卡工具目录），`_repro-dup-push-inproc.mjs` 里仓库路径是**本机绝对路径**，跨机重跑需改这一行（与 0.1.38 的 `_probe-fatal-real.mjs` 同类问题）。
+7. **P0 之外的两处遗留**：`_probe-doublepush-map.mjs` 与 `_repro-dup-push-inproc.mjs` 在 `<workdir>`（卡工具目录），`_repro-dup-push-inproc.mjs` 里仓库路径是**本机绝对路径**，跨机重跑需改这一行（与 0.1.38 的 `_probe-fatal-real.mjs` 同类问题）。
 
 ## 9. 上线与回滚
 
@@ -230,12 +230,12 @@ node <repo>\test\dedupe-ring.test.mjs   # pass 7
 
 ```powershell
 # 1) 升级前先归档日志（团队铁律）
-node D:\dsh\archive-log.cjs --file <该机>\studio.log
+node <workdir>\archive-log.cjs --file <该机>\studio.log
 # 2) 升级插件（各机自己的看门狗会拉起）
-npm.cmd pack --ignore-scripts --cache D:\dsh\.npm-cache      # 产出 dsh-agent-room-0.1.39.tgz
-#    （或用已上传的 tarball：/home/ubuntu/studio-files/dsh-agent-room-0.1.39.tgz）
+npm.cmd pack --ignore-scripts --cache <workdir>\.npm-cache      # 产出 dsh-agent-room-0.1.39.tgz
+#    （或用已上传的 tarball：/path/to/studio-files/dsh-agent-room-0.1.39.tgz）
 # 3) 校验：普通帧 n=1、控制帧 0、末行 RESULT: FIX VERIFIED
-node D:\dsh\_repro-dup-push.mjs --room 01a098a2-2015-7a1d-b5f7-9eca45afa65d
+node <workdir>\_repro-dup-push.mjs --room 01a098a2-2015-7a1d-b5f7-9eca45afa65d
 ```
 
 **回滚触发条件**（任一即回滚）：
@@ -248,17 +248,17 @@ node D:\dsh\_repro-dup-push.mjs --room 01a098a2-2015-7a1d-b5f7-9eca45afa65d
 **备份路径（改动前已落盘，绝对路径 + 时间戳）**
 
 ```
-D:\dsh\.dsh-backups\dsh-20260914-150127\src\host\service.ts     （0.1.38 源）
-D:\dsh\.dsh-backups\dsh-20260914-150127\lib\host\service.js     （0.1.38 构建产物）
-D:\dsh\.dsh-backups\dsh-20260914-150127\package.json
-D:\dsh\.dsh-backups\dsh-20260914-150127\new-0.1.39-service.js   （0.1.39 构建产物副本，用于 OLD/NEW 对照后恢复）
+<workdir>\.dsh-backups\dsh-20260914-150127\src\host\service.ts     （0.1.38 源）
+<workdir>\.dsh-backups\dsh-20260914-150127\lib\host\service.js     （0.1.38 构建产物）
+<workdir>\.dsh-backups\dsh-20260914-150127\package.json
+<workdir>\.dsh-backups\dsh-20260914-150127\new-0.1.39-service.js   （0.1.39 构建产物副本，用于 OLD/NEW 对照后恢复）
 ```
 
 **回滚命令**
 
 ```powershell
-$repo = (Resolve-Path 'D:\dsh\ITPM\*\dsh-agent-room').Path
-$bk   = 'D:\dsh\.dsh-backups\dsh-20260914-150127'
+$repo = (Resolve-Path '<workdir>\\*\dsh-agent-room').Path
+$bk   = '<workdir>\.dsh-backups\dsh-20260914-150127'
 Copy-Item "$bk\src\host\service.ts" "$repo\src\host\service.ts" -Force
 Copy-Item "$bk\lib\host\service.js" "$repo\lib\host\service.js" -Force
 Copy-Item "$bk\package.json"        "$repo\package.json"        -Force
@@ -266,6 +266,6 @@ Remove-Item "$repo\src\host\dedupe.ts","$repo\lib\host\dedupe.js" -Force
 Remove-Item "$repo\test\dedupe.test.mjs","$repo\test\dedupe-ring.test.mjs" -Force
 ```
 
-**回滚后校验**：`node D:\dsh\_repro-dup-push.mjs --room 01a098a2-…` 回到 `n=2`（同毫秒）+ 控制帧 `n=1` + `RESULT: OLD BEHAVIOUR`；`node D:\dsh\_repro-dup-push-inproc.mjs` 同样回到 `n=2 / 控制帧 1`（本版 §4.2 已把这条 OLD 基线跑出来，可直接逐字比对）。
+**回滚后校验**：`node <workdir>\_repro-dup-push.mjs --room 01a098a2-…` 回到 `n=2`（同毫秒）+ 控制帧 `n=1` + `RESULT: OLD BEHAVIOUR`；`node <workdir>\_repro-dup-push-inproc.mjs` 同样回到 `n=2 / 控制帧 1`（本版 §4.2 已把这条 OLD 基线跑出来，可直接逐字比对）。
 
 **回滚不了的部分**：① 已经落进房间 append-only 历史的消息撤不回（本版探针写了 `seq 2374/2375/2376/2377`，与卡 v2 的 `2335/2336/2358/2359/2360/2368/2369` 同属取证残留）；② **控制帧在两侧 UI 里不再可见**这件事只有回滚才能逆转（旧 UI 里两侧都能看到 `[org:*]` 行，卡实测两侧都在漏）；③ 若去重环已经吃过帧，被丢的帧**没有落盘副本**，无法事后补投 —— 故本版把 `skipped`/`evicted` 都做成可观测数字，先看计数再谈丢弃是否合理；④ 行号口径：本卡与卡⓪v3 都改 `src/host/service.ts`，**必须同批编译**，只回滚其中一张会让另一张的行号全部失准（重跑 `_probe-doublepush-map.mjs` 重新取号）。

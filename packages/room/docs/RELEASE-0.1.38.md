@@ -46,7 +46,7 @@ agentId 是房间房主身份、成员资格、任务权限、组织树归属、
 **门禁第 1 步 — OLD 行为复现（真实 0.1.37 构建产物，修复前跑，原始输出）**
 
 ```
-命令：node D:\dsh\_probe-identity-real.mjs     （import 真实 lib/host/room-service.js，dataDir 指向 D:\dsh\_identity-probe）
+命令：node <workdir>\_probe-identity-real.mjs     （import 真实 lib/host/room-service.js，dataDir 指向 <workdir>\_identity-probe）
 === clean ===
   identity.json first3 bytes : 7b 0a 20
   bytes / sha256 / mtime     : 147 / 1a13966b7f17b38a / 1789367688497.0889
@@ -70,7 +70,7 @@ agentId 是房间房主身份、成员资格、任务权限、组织树归属、
 **门禁第 2 步 — NEW 行为（同一条真实代码路径，修复并重建后跑，原始输出）**
 
 ```
-命令：node D:\dsh\_probe-identity-real.mjs
+命令：node <workdir>\_probe-identity-real.mjs
 === clean ===
   identity.json first3 bytes : 7b 0a 20
   bytes / sha256 / mtime     : 147 / 1a13966b7f17b38a / 1789367892852.2932
@@ -121,11 +121,11 @@ agentId 是房间房主身份、成员资格、任务权限、组织树归属、
 命令：node test/_probe-fatal-real.mjs corrupt   → EXIT=1
 stdout:
   === MODE corrupt ===
-    damaged file : D:\dsh\_fatal-probe\agent-room\identity.json
+    damaged file : <workdir>\_fatal-probe\agent-room\identity.json
     bytes/sha    : 73 / 8bc58011b2cc92d0
 stderr:
   dsh: fatal load failure: CorruptConfigError: identity.json is present but not parseable
-    (Unterminated string in JSON at position 73 (line 3 column 19)) at D:\dsh\_fatal-probe\agent-room\identity.json
+    (Unterminated string in JSON at position 73 (line 3 column 19)) at <workdir>\_fatal-probe\agent-room\identity.json
       at raiseCorrupt (.../lib/host/safety.js:343:11)
       at async Persistence.loadIdentity (.../lib/host/persistence.js:135:21)
       at async RoomService.ensureIdentity (.../lib/host/room-service.js:66:26)
@@ -157,9 +157,9 @@ stderr:
 
 | 产物 | 状态 |
 |---|---|
-| `D:\dsh\upgrade-studio.sh`（生成器，macOS/Linux 看门狗） | 已改 |
-| `D:\dsh\upgrade-studio.ps1`（生成器，Windows 看门狗模板） | 已改 |
-| `D:\dsh\studio\start-studio.cmd` / `.sh`（本版新增的**可直接部署**产物） | 已改，由各机自行安装（见第 7 节） |
+| `<workdir>\upgrade-studio.sh`（生成器，macOS/Linux 看门狗） | 已改 |
+| `<workdir>\upgrade-studio.ps1`（生成器，Windows 看门狗模板） | 已改 |
+| `<workdir>\studio\start-studio.cmd` / `.sh`（本版新增的**可直接部署**产物） | 已改，由各机自行安装（见第 7 节） |
 | `C:\studio\start-studio.cmd`（本机**正在运行**的那一份，比模板旧） | **本会话无法写入**，见第 8 节 |
 
 **G4 判据输出（用真实看门狗文件、把 `dsh web` 换成立即退出的桩；未启动任何服务）**
@@ -190,7 +190,7 @@ CASE C 有旁路（期望重启一次并消费掉旁路）：
 
 ## 6. 备份与隔离（G2）
 
-- 备份根**按平台推导，绝不硬编码盘符**：`DSH_IDENTITY_BACKUP_DIR` > `join(dirname(dshHome), "identity-backups")`（配置目录的**同级**，不在其内部）。卡 v3 的必改项：v2 硬编码 `D:\dsh\identity-backups`，实测该目录不存在，且团队有一台 macOS 机器（小黄），若硬编码则「备份失败即拒写」会**拒绝每一次身份写入**。
+- 备份根**按平台推导，绝不硬编码盘符**：`DSH_IDENTITY_BACKUP_DIR` > `join(dirname(dshHome), "identity-backups")`（配置目录的**同级**，不在其内部）。卡 v3 的必改项：v2 硬编码 `<workdir>\identity-backups`，实测该目录不存在，且团队有一台 macOS 机器（小黄），若硬编码则「备份失败即拒写」会**拒绝每一次身份写入**。
 - 路径在本平台**无法解析**（例如 darwin 上的 `D:\…`）⇒ **致命配置错误**（要求显式配置）；路径可解析但**不可写** ⇒ **拒写**但仍运行（把一次目录权限问题升级成节点下线是安全门禁变成故障）。
 - 写前备份 `<备份根>\<文件名>.<YYYYMMDD-HHmmss>.bak`，**校验副本字节数与源一致**，不一致则放弃写入并抛错（底层写入本身会吞错，不能假设成功）。
 - 保留份数 `BACKUP_KEEP = 10`（卡第 3 节把该数字登记为"待测：实现时由 4.5 定义并写入代码常量"）。**只裁剪普通备份**：`.corrupt.bak`（隔离副本）与 `.pre-repair.bak` 是证据，不被日常备份churn裁掉。
@@ -214,7 +214,7 @@ node tools/repair-identity.mjs --home "%USERPROFILE%\.dsh" --apply --reseed-org 
   --company-leader <uuid> --company-name "Studio" --member-agent-id <uuid> --member-name "MainControl"
 ```
 
-**实测（`D:\dsh\_repair-demo` 临时目录，未触碰任何真实配置）**
+**实测（`<workdir>\_repair-demo` 临时目录，未触碰任何真实配置）**
 
 ```
 $ node tools/repair-identity.mjs --home <tmp> --backup-dir <tmp-backups>
@@ -275,13 +275,13 @@ $ … --apply --reseed-org --company-leader <uuid> --company-name "Studio" --mem
 
 ```powershell
 # 1) 升级前先归档日志（团队铁律）
-node D:\dsh\archive-log.cjs --file <该机>\studio.log
+node <workdir>\archive-log.cjs --file <该机>\studio.log
 # 2) 升级插件（各机自己的看门狗会拉起）
 #    并把本版新增的看门狗产物装到该机：
 copy /Y "<repo>\studio\start-studio.cmd" "%USERPROFILE%\studio\start-studio.cmd"
 #    macOS: cp "<repo>/studio/start-studio.sh" "$HOME/studio/start-studio.sh" && chmod +x "$HOME/studio/start-studio.sh"
 # 3) 校验：编码探测应报 8 行 clean + exit=0
-powershell -NoProfile -ExecutionPolicy Bypass -File D:\dsh\utf8-probe-c00\detect-bom.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File <workdir>\utf8-probe-c00\detect-bom.ps1
 ```
 
 **回滚触发条件**（任一即回滚）：① 报出与真实损坏无关的 `CorruptConfigError`（误报）导致正常机器起不来；② 本机 agentId 发生变化；③ 组织树节点数下降；④ 看门狗进入崩溃循环且未命中停止条件；⑤ 备份根在该平台不可解析/不可写导致写入被全面阻断。

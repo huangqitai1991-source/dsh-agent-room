@@ -123,8 +123,8 @@ async kick() {
 | `docs/RELEASE-0.1.48.md` | 本文件 |
 | `package.json` | 版本 0.1.47 → 0.1.48（⚠️ 写盘用 `[IO.File]::ReadAllText/WriteAllText` + `UTF8Encoding($false)`：本版第一次改版本号时被 `Set-Content -Encoding UTF8` **写进了 BOM**，`git diff` 当场抓到并已按 G3 改正 —— 记录在此，因为它正是卡模板附录 B 那个坑） |
 | `lib/**` | `node build.mjs` 重新生成 |
-| （工作区，不在包内）`D:\dsh\_fix-47\gate-wake-activation.mjs` | 双向门禁扩到 **19 条期望**（新增 M/N/O/P：模型来源、无来源时的不成功语气、就地修复、落盘后仍可执行） |
-| （工作区，不在包内）`D:\dsh\card-09-wake-activation.md` | 方案卡 ⑨（已补 §0.48 一节与现场原始行） |
+| （工作区，不在包内）`<workdir>\_fix-47\gate-wake-activation.mjs` | 双向门禁扩到 **19 条期望**（新增 M/N/O/P：模型来源、无来源时的不成功语气、就地修复、落盘后仍可执行） |
+| （工作区，不在包内）`<workdir>\card-09-wake-activation.md` | 方案卡 ⑨（已补 §0.48 一节与现场原始行） |
 
 **明确没做**：不改协议/写盘格式；不动 `wake.ts`/`ack.ts`/`dedupe.ts`；**不重建**已有会话（只写回 options）；**不**给「不能执行的会话」造一个假成功；**不**改 0.1.47 的窗口与升级边界；**不做**「跨重启续做在飞唤醒」。
 
@@ -132,14 +132,14 @@ async kick() {
 
 ## 5. 发布门禁：同一个脚本，三种构建
 
-`D:\dsh\_fix-47\gate-wake-activation.mjs`（**19 条期望**）：
+`<workdir>\_fix-47\gate-wake-activation.mjs`（**19 条期望**）：
 
 ```
-PS> node … "D:\dsh\_fix-47\old046\lib" "…\old046\src"     # 真实 0.1.46（git archive 73a92a9）
+PS> node … "<workdir>\_fix-47\old046\lib" "…\old046\src"     # 真实 0.1.46（git archive 73a92a9）
 === summary: 2/19 expectations hold on this build ===   （exit=1）
     —— 只有两条 0.1.45/0.1.46 回归锁通过（设计如此）
 
-PS> node … "D:\dsh\_fix-47\old047\lib" "…\old047\src"     # 真实 0.1.47（git archive 0cd5682）
+PS> node … "<workdir>\_fix-47\old047\lib" "…\old047\src"     # 真实 0.1.47（git archive 0cd5682）
 === summary: 15/19 expectations hold on this build ===  （exit=1）
     FAIL M / the duty session is created with a REAL model selection
         create.agentOptions = [{}]        ← 空的：这就是根因本体
@@ -147,7 +147,7 @@ PS> node … "D:\dsh\_fix-47\old047\lib" "…\old047\src"     # 真实 0.1.47（
     FAIL O / a restored duty session WITHOUT a model is REPAIRED in place — still has no provider/model
     FAIL P / DURABILITY — the selection was NOT persisted (resident-model.json missing)
 
-PS> node … "D:\dsh\ITPM\数创港项目\dsh-agent-room\lib"      # 本版
+PS> node … "C:\work\项目\dsh-agent-room\lib"      # 本版
 === summary: 19/19 expectations hold on this build ===  （exit=0）
     PASS M   create.agentOptions = [{"provider":"deepseek","model":"v4-flash"}]
              LOG: "duty agent: model source = host-default (ctx.agentDefaultModel) …" / "spawned … — EXECUTABLE"
@@ -205,7 +205,7 @@ SUITES=22  TESTS=165  PASS=165  FAIL=0
 
 ## 7. 真机现场验证
 
-现场原始输出**写在卡里**（`D:\dsh\card-09-wake-activation.md` §6.3），本节只写纪律与判据：
+现场原始输出**写在卡里**（`<workdir>\card-09-wake-activation.md` §6.3），本节只写纪律与判据：
 
 - **机器**：小麦 `01a09461-351d-793d-bf49-b8e08641f082`（允许触碰的两台之一；**未碰**小婷、**未碰**小黄、**未碰**控制机）。
 - **安装**：该机**自己的** `upgrade-studio.ps1`（先停服务再装，绝不手抄 `node_modules`）。
@@ -222,10 +222,10 @@ SUITES=22  TESTS=165  PASS=165  FAIL=0
 ## 8. 交付物与复现入口
 
 ```powershell
-$REPO = "D:\dsh\ITPM\数创港项目\dsh-agent-room"
-$OLD46 = "D:\dsh\_fix-47\old046\lib"    # git archive 73a92a9（0.1.46）+ node_modules junction
-$OLD47 = "D:\dsh\_fix-47\old047\lib"    # git archive 0cd5682（0.1.47）+ node_modules junction
-$GATE  = "D:\dsh\_fix-47\gate-wake-activation.mjs"
+$REPO = "C:\work\项目\dsh-agent-room"
+$OLD46 = "<workdir>\_fix-47\old046\lib"    # git archive 73a92a9（0.1.46）+ node_modules junction
+$OLD47 = "<workdir>\_fix-47\old047\lib"    # git archive 0cd5682（0.1.47）+ node_modules junction
+$GATE  = "<workdir>\_fix-47\gate-wake-activation.mjs"
 
 cd $REPO; npx tsc --noEmit; node build.mjs
 
@@ -236,10 +236,10 @@ node $GATE "$REPO\lib"                           # 期望 19/19 exit 0
 Get-ChildItem test\*.test.mjs, test\*.e2e.mjs | ForEach-Object { node $_.FullName }
 $env:AR_LIB = $OLD47; node ($REPO + "\test\duty-model.test.mjs")     # 期望 0 pass / 10 fail
 
-# 原始输出留档：D:\dsh\_fix-47\{gate-old.txt,gate-old047.txt,gate-new.txt,duty-old047.txt,duty.out.txt}
+# 原始输出留档：<workdir>\_fix-47\{gate-old.txt,gate-old047.txt,gate-new.txt,duty-old047.txt,duty.out.txt}
 ```
 
-> 旧构建树必须在**能找到 `node_modules`** 的位置（`lib/host/service.js` 会 `import "@deepseek-ai/cordis"`，裸包名按文件所在目录向上解析），所以它们放在 `D:\dsh\_fix-47\old0XX\` 并把 `old0XX\node_modules` 做成指向本仓 `node_modules` 的 **junction**。
+> 旧构建树必须在**能找到 `node_modules`** 的位置（`lib/host/service.js` 会 `import "@deepseek-ai/cordis"`，裸包名按文件所在目录向上解析），所以它们放在 `<workdir>\_fix-47\old0XX\` 并把 `old0XX\node_modules` 做成指向本仓 `node_modules` 的 **junction**。
 
 ---
 
@@ -294,6 +294,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<studio>\upgrade-studio.ps1
 
 ## 12. 卡与发布物
 
-- 方案卡：`D:\dsh\card-09-wake-activation.md`（机理依据 / 阈值来源 / 判据原始输出 / 回滚 / 跨机 / 自评；§0.48 一节记本版）。
-- 缺陷账本：`D:\dsh\studio-defect-list.md` 新增 **D-40**（本版），并交叉引用 **D-37**（另一路 worker 的根因定位）与 **D-38/D-39**（0.1.47）。
+- 方案卡：`<workdir>\card-09-wake-activation.md`（机理依据 / 阈值来源 / 判据原始输出 / 回滚 / 跨机 / 自评；§0.48 一节记本版）。
+- 缺陷账本：`<workdir>\studio-defect-list.md` 新增 **D-40**（本版），并交叉引用 **D-37**（另一路 worker 的根因定位）与 **D-38/D-39**（0.1.47）。
 - ⚠️ **本文件位于包内**，包的 md5 无法写在本文件里（写入即改变哈希）。权威记录在**包外**：卡⑨ §11「发布物记录」。

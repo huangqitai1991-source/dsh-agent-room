@@ -99,10 +99,10 @@ A 线的两条修复在本版中**逐条重跑门禁复核**（见 §5），确�
 **门禁脚本**（本版新增/沿用，同一支断言集、两侧都是**真代码**）：
 
 ```powershell
-PS> powershell -File D:\dsh\_probe\run-gate-0143.ps1
+PS> powershell -File <workdir>\_probe\run-gate-0143.ps1
 ```
 
-**OLD 侧 = 已部署的那份安装**：`C:\Users\scorp\.dsh\profiles\web\node_modules\dsh-agent-room\lib`
+**OLD 侧 = 已部署的那份安装**：`<home>\.dsh\profiles\web\node_modules\dsh-agent-room\lib`
 （**只读**，本版从未写入该路径）。
 
 > **必须纠正一处前提**：任务交办时说该 OLD 侧「现在是一个真的 0.1.42」。**实测不是**——
@@ -110,10 +110,10 @@ PS> powershell -File D:\dsh\_probe\run-gate-0143.ps1
 > （`joinedBridge` / `recordConnInfo` / `joinRejected` / `collapseDuplicateMembers` / `lastSeenAt` 命中数均为 0）。
 > 也就是说：**已部署的机器跑的还是 0.1.41，0.1.42 从未被部署过。**
 > 本版的门禁因此以 **0.1.41** 为 OLD 基准，并对 A 线也取得了有效对照（A 的字段在 0.1.41 上不存在 ⇒ 旧侧应当失败，
-> 事实也确实失败）。证据强度：`C:\Users\scorp\.dsh\profiles\web\node_modules\dsh-agent-room\lib` 与
-> `D:\dsh\_probe\old-0.1.41\lib` **逐字节相同**（22/22 个文件、大小 + md5 全等），
+> 事实也确实失败）。证据强度：`<home>\.dsh\profiles\web\node_modules\dsh-agent-room\lib` 与
+> `<workdir>\_probe\old-0.1.41\lib` **逐字节相同**（22/22 个文件、大小 + md5 全等），
 > 即 OLD 侧就是**产出这些缺陷的那份代码**，不是近似重写版。
-> A 线的静态守卫（`AR_SRC`）另指向 `D:\dsh\_probe\old-0.1.41\package.json`（真实 0.1.41 源码树，
+> A 线的静态守卫（`AR_SRC`）另指向 `<workdir>\_probe\old-0.1.41\package.json`（真实 0.1.41 源码树，
 > `src/host/service.ts` 里 A 线标记命中数 = 0），所以静态断言量的也是**旧源码**。
 
 ### 5.1 逐条修复：NEW 失败数 | OLD(0.1.41) 失败数
@@ -147,7 +147,7 @@ NEW 侧该套件 **3/3、exit 0、5.9 s 内自然退出**（关键区别：`D-18
 ### 5.4 item 4：OLD(0.1.41) = 0 失败，这是**结论**而不是空白
 
 `wake-duplicate.test.mjs` 在 0.1.41 上 **6/6 通过、exit 0**，在本版新构建上同样 **6/6、exit 0**。
-把它指向**真正的 0.1.40**（`D:\dsh\_probe\lib-0.1.40\lib`）则 **3 pass / 3 fail、exit 1**，
+把它指向**真正的 0.1.40**（`<workdir>\_probe\lib-0.1.40\lib`）则 **3 pass / 3 fail、exit 1**，
 其中 P1 的实测值是 `followup dispatches = 21 for ONE message (seq 1) over 20 regressed sweeps`
 （一条消息被唤醒 21 次）。**结论**：重复唤醒的缺陷存在于 **0.1.40**，
 0.1.41 的唤醒层单调水位线**已经**把它关掉了；本版**无法**在 0.1.41/0.1.43 上复现，
@@ -175,7 +175,7 @@ NEW 侧该套件 **3/3、exit 0、5.9 s 内自然退出**（关键区别：`D-18
 
 - 不碰协议、不碰客户端渲染、不碰唤醒/投递/镜像/self-join/BOM 身份等既有面。
 - **不重做 org 侧那一半**：`touchNodeLiveness()`（节点侧 `lastSeenAt`）属于**另一个仓库**
-  `D:\dsh\ITPM\数创港项目\dsh-agent-org`，已在那里提交为 **`048bcf8`**；本版只**不破坏**其房间侧契约
+  `C:\work\项目\dsh-agent-org`，已在那里提交为 **`048bcf8`**；本版只**不破坏**其房间侧契约
   （即：成员帧仍从同一入口进入、`lastSeenAt` 仍由房主观测打戳）。
 - **不部署**：本版只产出 tarball 并上传，不升级任何机器（见 §9、§10.1）。
 
@@ -208,24 +208,24 @@ NEW 侧该套件 **3/3、exit 0、5.9 s 内自然退出**（关键区别：`D-18
 
 `npx tsc --noEmit` 干净（exit 0）；`node build.mjs` 成功（`built lib/host/*, lib/client.js, lib/skills/`）。
 
-> 运行时 stderr 有一行 `[agent-room] backup root C:\Users\scorp\identity-backups is NOT writable (EPERM …)`：
+> 运行时 stderr 有一行 `[agent-room] backup root <home>\identity-backups is NOT writable (EPERM …)`：
 > 本会话文件沙箱不允许写工作区之外，属 **0.1.38 既有行为**（拒写而不是覆盖），与本版改动无关。
 
 ## 8. 交付物与复现入口
 
 ```powershell
 # 门禁（同一断言集跑两侧：NEW 全过、OLD(0.1.41) 失败；含 item 4 的 0.1.40 复现）
-powershell -File D:\dsh\_probe\run-gate-0143.ps1
+powershell -File <workdir>\_probe\run-gate-0143.ps1
 # 本次门禁的原始日志与汇总
-#   D:\dsh\_probe\gate-logs-0143\            （逐套件 out/err/exit code）
-#   D:\dsh\_probe\gate-logs-0143\SUMMARY.txt （NEW vs OLD 数字一览）
+#   <workdir>\_probe\gate-logs-0143\            （逐套件 out/err/exit code）
+#   <workdir>\_probe\gate-logs-0143\SUMMARY.txt （NEW vs OLD 数字一览）
 
 # 逐个直跑（见 §7 表）
-node D:\dsh\ITPM\数创港项目\dsh-agent-room\test\<name>.mjs
+node C:\work\项目\dsh-agent-room\test\<name>.mjs
 ```
 
-tarball：`dsh-agent-room-0.1.43.tgz`（`npm.cmd pack --ignore-scripts --cache D:\dsh\.npm-cache`）。
-name / size / md5 记录在 `D:\dsh\_release-0.1.43-artifact.txt` 并随上传一并核对——**tarball 无法自述自身的 md5**，
+tarball：`dsh-agent-room-0.1.43.tgz`（`npm.cmd pack --ignore-scripts --cache <workdir>\.npm-cache`）。
+name / size / md5 记录在 `<workdir>\_release-0.1.43-artifact.txt` 并随上传一并核对——**tarball 无法自述自身的 md5**，
 故不写进本文件（避免「改了 md5 就得重打包、重打包又改 md5」的循环）。
 打包前已用 `tar -tzf` 证明包里**没有**任何暂存路径（`lib-old`、`lib-old-0.1.4x`、`_probe`）。
 
@@ -240,9 +240,9 @@ name / size / md5 记录在 `D:\dsh\_release-0.1.43-artifact.txt` 并随上传�
 
 ```powershell
 # 1) 升级前先归档日志（团队铁律）
-node D:\dsh\archive-log.cjs --file <该机>\studio.log
+node <workdir>\archive-log.cjs --file <该机>\studio.log
 # 2) 升级插件（各机看门狗自行拉起）
-#    用已上传的 tarball：/home/ubuntu/studio-files/dsh-agent-room-0.1.43.tgz
+#    用已上传的 tarball：/path/to/studio-files/dsh-agent-room-0.1.43.tgz
 # 3) 升级后立刻读状态：成员活性与桥接字段都应出现
 curl -s http://127.0.0.1:3080/agent-room-api/state
 #    看 rooms[].members[].lastSeenAt / lastSeenAddress / lastExecAt / lastExecOk
@@ -264,12 +264,12 @@ curl -s http://127.0.0.1:3080/agent-room-api/state
 **回滚命令**
 
 ```powershell
-$repo = (Resolve-Path 'D:\dsh\ITPM\*\dsh-agent-room').Path
+$repo = (Resolve-Path '<workdir>\\*\dsh-agent-room').Path
 git -C $repo revert --no-edit <本版合并提交 hash>      # 合并提交，revert 一次即回到 0.1.42 状态
 node "$repo\build.mjs"
 ```
 
-**回滚后校验**：`node D:\dsh\_probe\run-gate-0143.ps1` 会在 OLD 侧复现 D-18/D-20/D-21 的旧行为
+**回滚后校验**：`node <workdir>\_probe\run-gate-0143.ps1` 会在 OLD 侧复现 D-18/D-20/D-21 的旧行为
 （无限重拨、无活性字段、重复成员记录），而 NEW 侧（即回滚后的树）会退化为「只剩 A 线两条修复」——
 `bridge-state` / `listening` 仍应全过，另外四个套件会随代码一起消失。
 **回滚不了的部分**：① D-21 的 **boot 收敛回写**已经改写了各机 dataDir 里的房间文件（回滚不会把重复记录变回来，
@@ -298,5 +298,5 @@ node "$repo\build.mjs"
 8. **合并的机械正确性靠测试证明，不靠 diff 审阅**：两线重叠只有 1 个 hunk（§4），
    但「没有别的语义丢失」是由 **18 个套件 116 条断言全过 + tsc 干净**来支撑的，
    而不是由逐行对读两份 diff 支撑的——本版**没有**做完整的三方逐行审阅。
-9. **门禁脚本的仓库路径是本机解析的**（`Resolve-Path 'D:\dsh\ITPM\*\dsh-agent-room'`），跨机重跑需确认该通配只匹配一个仓库；
+9. **门禁脚本的仓库路径是本机解析的**（`Resolve-Path '<workdir>\\*\dsh-agent-room'`），跨机重跑需确认该通配只匹配一个仓库；
    OLD 侧可用 `AR_LIB`（B 线套件）与 `AR_LIB`+`AR_SRC`（A 线套件）指向任意旧构建与旧源码。

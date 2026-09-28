@@ -134,7 +134,7 @@ guarded("parseRawBlock requires the header and every required field, and says wh
 });
 
 guarded("the REAL probe reply captured from live hardware still parses (and yields 0.1.49)", () => {
-  const live = "D:\\dsh\\_facts-proof\\raw-huang-verified.txt";
+  const live = "<workdir>\\_facts-proof\\raw-huang-verified.txt";
   if (!existsSync(live)) return;                       // the suite stays portable; the check runs where the evidence is
   const parsed = parseRawBlock(readFileSync(live, "utf8"));
   assert.strictEqual(parsed.ok, true, parsed.reason);

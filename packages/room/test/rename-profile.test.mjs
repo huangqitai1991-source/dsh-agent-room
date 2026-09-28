@@ -7,7 +7,7 @@
  *   tool, so the only way was to edit identity.json by hand — which the running
  *   process cannot see, because the identity object is cached at boot and never
  *   re-read. The next save rewrote the file from that cache, so the hand fix was
- *   silently reverted (reproduced in D:\dsh\_rename-old-evidence.mjs, OLD-1/OLD-2).
+ *   silently reverted (reproduced in <workdir>\_rename-old-evidence.mjs, OLD-1/OLD-2).
  *
  * WHAT IS PINNED HERE
  *   1. `POST /agent-room-api/profile` and `gateway.renameSelf` both rename, through
@@ -24,7 +24,7 @@
  *   7. the backfill path for names that are ALREADY damaged: an agentId-based,
  *      explicitly-flagged operation that prints its plan before writing.
  *
- * SAFETY: every case writes only under D:\dsh\_rename-tests\ and points both
+ * SAFETY: every case writes only under <workdir>\_rename-tests\ and points both
  * DSH_HOME and DSH_IDENTITY_BACKUP_DIR at that temp tree. The in-process instances
  * bind a high loopback port inside the test and are stopped by the test; nothing
  * on this machine is renamed and no other process is touched.
@@ -44,7 +44,7 @@ import { RoomService } from "../lib/host/room-service.js";
 import { createRouter } from "../lib/host/web.js";
 import { IdentityNotReadyError, InvalidNicknameError, assertValidNickname, nicknameProblem } from "../lib/host/safety.js";
 
-const ROOT = "D:\\dsh\\_rename-tests";
+const ROOT = "<workdir>\\_rename-tests";
 const AGENT_ID = "01a0231b-bbe5-720a-97a4-819744eeae76";
 const PEER_ID = "01a0281a-52de-7c4d-a1e9-7e6db367d3dd";
 const OWNED_ROOM = "01a09d61-6bff-7899-881d-b63f6434eef8";

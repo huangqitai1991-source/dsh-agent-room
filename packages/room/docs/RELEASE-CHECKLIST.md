@@ -7,7 +7,7 @@
 
 ## 前置条件
 
-- 仓库路径：`D:\dsh\dsh-agent-room`（纯 ASCII，无中文目录名）。
+- 仓库路径：`<workdir>\dsh-agent-room`（纯 ASCII，无中文目录名）。
 - 目标 profile 路径同样必须是纯 ASCII。
 - Node >= 22.19。
 
@@ -142,7 +142,7 @@
 **现场急救（不重启 web、不断自己的会话）：**
 ```
 curl -X POST http://127.0.0.1:3080/agent-room-api/relay-config -H "Content-Type: application/json" -d "{\"relay\":\"\"}"
-curl -X POST http://127.0.0.1:3080/agent-room-api/relay-config -H "Content-Type: application/json" -d "{\"relay\":\"ws://42.193.189.15:9320\"}"
+curl -X POST http://127.0.0.1:3080/agent-room-api/relay-config -H "Content-Type: application/json" -d "{\"relay\":\"ws://your-host:9320\"}"
 ```
 
 **判断机器在不在线，不要用 ping 或端口扫描**：agent-room 的 web 只监听 `127.0.0.1`，

@@ -1,0 +1,43 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+*.tsbuildinfo
+
+# runtime state — NEVER commit: identity, tokens, room state, message stores
+.data/
+data/
+*.db
+*.db-wal
+*.db-shm
+identity.json
+joined.json
+relay-secrets.json
+secrets/
+.env
+.env.*
+
+# release artifacts + ledger
+*.tgz
+ledger/
+release-ledger.jsonl
+release-gate.config.json
+evidence-*.json
+
+# logs and scratch
+*.log
+logs/
+tmp/
+.tmp/
+_bom-tests/
+_rename-tests/
+_fatal-probe/
+_facts-proof/
+
+# editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

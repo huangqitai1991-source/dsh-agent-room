@@ -70,7 +70,7 @@ promise reject，而宿主进程级的 `installFailLoud` **碰巧**兜住了它�
 ℹ fail 0
 ```
 
-关键断言（都是可跑的，用的临时目录 `D:\dsh\_bom-tests\`）：
+关键断言（都是可跑的，用的临时目录 `<workdir>\_bom-tests\`）：
 
 - 带 BOM 的 `org-state.json`：`nodes.length === 2`、`leaderAgentId` 仍可读、**sha256 与 mtime 不变**（读操作不写盘）；
 - 损坏的 `org-state.json`：`load()` reject 且 `error.name === 'CorruptConfigError'`、`error.file` 指向该文件；
@@ -99,8 +99,8 @@ promise reject，而宿主进程级的 `installFailLoud` **碰巧**兜住了它�
 ## 6. 上线与回滚
 
 **上线**（每台机器自己执行）：与 `dsh-agent-room` 0.1.38 **同批**；升级前先归档日志
-（`node D:\dsh\archive-log.cjs --file <该机>\studio.log`）；升级后跑
-`powershell -NoProfile -ExecutionPolicy Bypass -File D:\dsh\utf8-probe-c00\detect-identity-drift.ps1`
+（`node <workdir>\archive-log.cjs --file <该机>\studio.log`）；升级后跑
+`powershell -NoProfile -ExecutionPolicy Bypass -File <workdir>\utf8-probe-c00\detect-identity-drift.ps1`
 确认 `org kind=company count = 1`、`org kind=member count` 未下降。
 
 **回滚触发条件**：① 报出与真实损坏无关的 `CorruptConfigError` 导致正常机器起不来；② 组织树节点数下降；

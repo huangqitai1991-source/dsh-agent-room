@@ -31,7 +31,7 @@
 - `node test/visibility.test.mjs` → 8 pass / 0 fail
 - `node build.mjs` → built lib/host/*, lib/tools/*, lib/client.js
 - 产物：`dsh-agent-org-0.2.9.tgz` 24271 B，md5 `1E5A5284907D5E6B47E6937C9488995C`
-- 已上传 `http://42.193.189.15:8090/dsh-agent-org-0.2.9.tgz`
+- 已上传 `http://your-host:8090/dsh-agent-org-0.2.9.tgz`
 - `upgrade-studio.sh` / `upgrade-studio.ps1` 的 `ORG_VER` 默认值已一并改为 `0.2.9` 并重新上传
 
 ## 升级方式
@@ -40,13 +40,13 @@ macOS / Linux：
 
 ```sh
 gzip -c ~/.dsh/agent-org/audit.jsonl > ~/.dsh/agent-org/audit-<日期>.jsonl.gz && : > ~/.dsh/agent-org/audit.jsonl
-curl -fsSL http://42.193.189.15:8090/upgrade-studio.sh -o ~/upgrade-studio.sh && bash ~/upgrade-studio.sh
+curl -fsSL http://your-host:8090/upgrade-studio.sh -o ~/upgrade-studio.sh && bash ~/upgrade-studio.sh
 ```
 
 Windows：
 
 ```powershell
-iwr http://42.193.189.15:8090/upgrade-studio.ps1 -OutFile "$env:TEMP\upgrade-studio.ps1" -UseBasicParsing
+iwr http://your-host:8090/upgrade-studio.ps1 -OutFile "$env:TEMP\upgrade-studio.ps1" -UseBasicParsing
 & "$env:TEMP\upgrade-studio.ps1"
 ```
 

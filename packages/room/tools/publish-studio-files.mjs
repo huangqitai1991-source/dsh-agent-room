@@ -15,8 +15,8 @@
  *   time.
  *
  * usage: node tools/publish-studio-files.mjs <file>... [--out <manifest>] [--scp-to <user@host:/dir>]
- *        node tools/publish-studio-files.mjs D:\\dsh\\upgrade-studio.ps1 D:\\dsh\\upgrade-studio.sh ^
- *             D:\\dsh\\ITPM\\数创港项目\\dsh-agent-room\\tools\\profile-guard.mjs
+ *        node tools/publish-studio-files.mjs <workdir>\\upgrade-studio.ps1 <workdir>\\upgrade-studio.sh ^
+ *             <workdir>\\dsh-agent-room\\tools\\profile-guard.mjs
  *
  * It writes the manifest and prints the exact scp line (it never uploads anything itself: uploading
  * is the release tool's job, and a tool that both decides and ships is how silent failures happen).
@@ -82,7 +82,7 @@ if (invokedDirectly) {
     console.log(`  ${name.padEnd(24)} md5=${info.md5}  bytes=${info.bytes}`);
   }
   const targets = files.map((f) => `"${f}"`).join(" ");
-  const dest = scpTo ?? "ubuntu@42.193.189.15:/home/ubuntu/studio-files/";
+  const dest = scpTo ?? process.env.RELEASE_REMOTE ?? "user@your-host:/path/to/studio-files/";
   console.log("");
   console.log(`scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL ${targets} "${manifestPath}" ${dest}`);
   process.exit(0);

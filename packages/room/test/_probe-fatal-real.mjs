@@ -14,7 +14,7 @@
  *
  *   node test/_probe-fatal-real.mjs
  *
- * It never touches a real DSH home (everything is under D:\dsh\_fatal-probe) and it
+ * It never touches a real DSH home (everything is under <workdir>\_fatal-probe) and it
  * starts no service: boot() throws before ensurePeerServer() is reached.
  */
 
@@ -26,9 +26,9 @@ import { Context } from "@deepseek-ai/cordis";
 import { AgentRoomService } from "../lib/host/service.js";
 
 const DSH_APP_BOOT =
-  "C:\\Users\\scorp\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh\\node_modules\\@deepseek-ai\\dsh-app-boot\\lib\\index.js";
+  "<home>\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh\\node_modules\\@deepseek-ai\\dsh-app-boot\\lib\\index.js";
 
-const ROOT = "D:\\dsh\\_fatal-probe";
+const ROOT = "<workdir>\\_fatal-probe";
 const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
 
 fs.rmSync(ROOT, { recursive: true, force: true });

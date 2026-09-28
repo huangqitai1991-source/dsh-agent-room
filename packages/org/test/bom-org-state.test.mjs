@@ -10,7 +10,7 @@
  * ignore incoming snapshots, so an owner that read an empty tree would push the
  * empty tree onto the entire organisation with no self-heal.
  *
- * Every case writes only under `D:\dsh\_bom-tests\`. Run directly:
+ * Every case writes only under `<workdir>\_bom-tests\`. Run directly:
  *   node test/bom-org-state.test.mjs
  */
 
@@ -39,7 +39,7 @@ import {
   resolveBackupRoot,
 } from "../src/host/safety.js";
 
-const ROOT = "D:\\dsh\\_bom-tests";
+const ROOT = "<workdir>\\_bom-tests";
 const OWNER = "01a0231b-bbe5-720a-97a4-819744eeae76";
 const OTHER = "01a0281a-52de-7c4d-a1e9-7e6db367d3dd";
 const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
@@ -278,7 +278,7 @@ test("NEW: G1 guards on the org write path", async () => {
 });
 
 test("NEW: the org backup root is derived per platform, never a hardcoded drive letter", async () => {
-  const home = "C:\\Users\\example\\.dsh";
+  const home = "<home>\\.dsh";
   process.env.DSH_HOME = home;
   delete process.env.DSH_IDENTITY_BACKUP_DIR;
   assert.equal(resolveBackupRoot(), join(dirname(home), "identity-backups"), "a sibling of the DSH home, not inside it");
@@ -287,10 +287,10 @@ test("NEW: the org backup root is derived per platform, never a hardcoded drive 
   process.env.DSH_IDENTITY_BACKUP_DIR = join(ROOT, "explicit-backups");
   assert.equal(resolveBackupRoot(), join(ROOT, "explicit-backups"));
 
-  assert.throws(() => assertPlatformResolvableFor("D:\\dsh\\identity-backups", "darwin"), /Windows-only path/);
+  assert.throws(() => assertPlatformResolvableFor("<workdir>\\identity-backups", "darwin"), /Windows-only path/);
   assert.throws(() => assertPlatformResolvableFor("\\\\server\\share\\b", "darwin"), /Windows-only path/);
   assert.doesNotThrow(() => assertPlatformResolvableFor("/Users/maishuting/identity-backups", "darwin"));
-  assert.doesNotThrow(() => assertPlatformResolvableFor("D:\\dsh\\identity-backups", "win32"));
+  assert.doesNotThrow(() => assertPlatformResolvableFor("<workdir>\\identity-backups", "win32"));
   assert.throws(() => assertPlatformResolvableFor("relative", "win32"), /not absolute/);
 
   // The card's must-fix, checked on the source: the default root must never be a

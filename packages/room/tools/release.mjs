@@ -52,7 +52,7 @@
  *   1  REFUSED    (the gates refused, or package.json and --version disagree: nothing was packed)
  *   2  ERROR      (cannot pack / upload / verify / record: nothing is left published)
  *
- * Run directly:  node tools/release.mjs --version 0.1.51 --evidence D:\dsh\evidence-0.1.51.json
+ * Run directly:  node tools/release.mjs --version 0.1.51 --evidence ./evidence-0.1.51.json
  */
 
 import { copyFileSync, existsSync, mkdirSync, openSync, closeSync, readFileSync, rmSync, statSync } from "node:fs";
@@ -67,9 +67,13 @@ export const EXIT_PUBLISHED = 0;
 export const EXIT_REFUSED = 1;
 export const EXIT_ERROR = 2;
 
-export const DEFAULT_REMOTE = "ubuntu@42.193.189.15:/home/ubuntu/studio-files/";
-export const DEFAULT_HTTP_BASE = "http://42.193.189.15:8090";
-export const DEFAULT_ASKPASS = "D:\\dsh\\_askpass.cmd";
+// Deploy target for published artifacts. Override per machine:
+//   RELEASE_REMOTE     e.g. "user@your-host:/path/to/studio-files/"
+//   RELEASE_HTTP_BASE  e.g. "http://your-host:8090"
+//   RELEASE_ASKPASS    optional ssh askpass helper for non-interactive runs
+export const DEFAULT_REMOTE = process.env.RELEASE_REMOTE ?? "user@your-host:/path/to/studio-files/";
+export const DEFAULT_HTTP_BASE = process.env.RELEASE_HTTP_BASE ?? "http://your-host:8090";
+export const DEFAULT_ASKPASS = process.env.RELEASE_ASKPASS ?? "";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = dirname(HERE);
@@ -83,8 +87,8 @@ const USAGE = [
   "  --author <who>      the author of this version (default: the current user)",
   "",
   "gate inputs (forwarded to tools/release-gate.mjs):",
-  "  --ledger <file>     default D:\\dsh\\release-ledger.jsonl (also the publish row's home)",
-  "  --config <file>     default D:\\dsh\\release-gate.config.json",
+  "  --ledger <file>     default <workdir>\\release-ledger.jsonl (also the publish row's home)",
+  "  --config <file>     default <workdir>\\release-gate.config.json",
   "  --max <n> --override --reason <why>    version-count quota controls (reason is recorded)",
   "",
   "publishing:",
@@ -112,7 +116,7 @@ let runSeq = 0;
  * child an empty stdin (NUL) without a pipe, which is what the non-interactive ssh recipe needs.
  */
 function runCommand(cmd, args, { cwd = null, env = process.env, timeoutMs = 600000 } = {}) {
-  const runDir = process.env.DSH_RELEASE_RUN_DIR ?? "D:\\dsh\\_release-gate-run";
+  const runDir = process.env.DSH_RELEASE_RUN_DIR ?? "<workdir>\\_release-gate-run";
   let outFile;
   try {
     mkdirSync(runDir, { recursive: true });

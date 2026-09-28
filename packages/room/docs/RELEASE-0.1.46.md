@@ -10,7 +10,7 @@
 | 数据面 | `GET /agent-room-api/state` 新增 **`ack.{…}` 19 个扁平计数**（与 `wake.{…}` 同形状） | **0.1.46** |
 | 缺席可见 | 派活 120 s 内没人回执 → `ack.unackedTargets` 计数；**房主侧**再补**一行**限速的 `[ack-miss] seq=N 未回执：<昵称>` | **0.1.46** |
 | 不回归 | 唤醒规则 / 拒绝留痕 / 单调水位线 / 自证排除 / 风暴护栏 **逐条回归锁**（新旧双跑均绿） | **0.1.46** |
-| 卡 | `D:\dsh\card-08-ack-receipt.md`（方案卡 ⑧，含旧/新门禁原始输出与现场证明） | 本版同步 |
+| 卡 | `<workdir>\card-08-ack-receipt.md`（方案卡 ⑧，含旧/新门禁原始输出与现场证明） | 本版同步 |
 
 ---
 
@@ -82,8 +82,8 @@
 | `docs/RELEASE-0.1.46.md` | 本文件 |
 | `package.json` | 版本 0.1.45 → 0.1.46 |
 | `lib/**` | `node build.mjs` 重新生成（含 `lib/host/ack.js`） |
-| （工作区，不在包内）`D:\dsh\_fix-46\gate-ack-receipt.mjs` | 双向门禁脚本：**同一套 23 条期望**，分别打 0.1.45 装机产物与本版 |
-| （工作区，不在包内）`D:\dsh\card-08-ack-receipt.md` | 方案卡 ⑧（含现场证明原始输出与发布物记录） |
+| （工作区，不在包内）`<workdir>\_fix-46\gate-ack-receipt.mjs` | 双向门禁脚本：**同一套 23 条期望**，分别打 0.1.45 装机产物与本版 |
+| （工作区，不在包内）`<workdir>\card-08-ack-receipt.md` | 方案卡 ⑧（含现场证明原始输出与发布物记录） |
 
 **明确没做**：不改协议与写盘格式；不动 `dedupe.ts` / 镜像收敛 / self-join / BOM 身份 / 单调唤醒水位线 / 拒绝日志政策；**不做**回执的落盘与重放；**不修**"房间没开 listening"这一类无计数路径（仍需人看 `/state.rooms[].listening`，见 D-35）。
 
@@ -91,12 +91,12 @@
 
 ## 5. 发布门禁：同一脚本，先量旧构建，再量本版
 
-### 5.1 双向门禁（`D:\dsh\_fix-46\gate-ack-receipt.mjs`）
+### 5.1 双向门禁（`<workdir>\_fix-46\gate-ack-receipt.mjs`）
 
 ```
-PS> node D:\dsh\_fix-46\gate-ack-receipt.mjs "C:\Users\scorp\.dsh\profiles\web\node_modules\dsh-agent-room\lib"
+PS> node <workdir>\_fix-46\gate-ack-receipt.mjs "<home>\.dsh\profiles\web\node_modules\dsh-agent-room\lib"
 === summary: 7/23 expectations hold on this build ===      （exit=1）   ← OLD = 部署中的 0.1.45
-PS> node D:\dsh\_fix-46\gate-ack-receipt.mjs "D:\dsh\ITPM\数创港项目\dsh-agent-room\lib"
+PS> node <workdir>\_fix-46\gate-ack-receipt.mjs "C:\work\项目\dsh-agent-room\lib"
 === summary: 23/23 expectations hold on this build ===     （exit=0）   ← NEW = 本版
 ```
 
@@ -130,7 +130,7 @@ PASS  F the read window is still >= 200 rows  expected=yes actual=yes
 ### 5.2 套件级旧构建对照（`AR_LIB` 指向 0.1.45 装机产物）
 
 ```
-PS> $env:AR_LIB="C:\Users\scorp\.dsh\profiles\web\node_modules\dsh-agent-room\lib"; node test/ack.test.mjs
+PS> $env:AR_LIB="<home>\.dsh\profiles\web\node_modules\dsh-agent-room\lib"; node test/ack.test.mjs
 ℹ tests 12   ℹ pass 1   ℹ fail 11      （exit=1）
    —— 11 条新断言全红（旧构建连 `host/ack.js` 都没有：没有回执、没有计数、没有区分手段）
    —— 唯一通过的是「0.1.45 的唤醒行为不变」那条回归锁：它在**新旧两个构建上都绿**，
@@ -177,9 +177,9 @@ SUITES=20  TESTS=138  PASS=138  FAIL=0
 
 ## 7. 真机现场验证
 
-0.1.45 的先例（§7.2 那条）在本版继续执行：**现场证明需要先有这个包**（成员机从 `http://42.193.189.15:8090/` 拉包升级），所以现场原始输出**写在卡里**，不回头重打包——0.1.44 一晚重打包 4 次、把已公布 md5 作废 3 次，代价是下游说明全部失效。
+0.1.45 的先例（§7.2 那条）在本版继续执行：**现场证明需要先有这个包**（成员机从 `http://your-host:8090/` 拉包升级），所以现场原始输出**写在卡里**，不回头重打包——0.1.44 一晚重打包 4 次、把已公布 md5 作废 3 次，代价是下游说明全部失效。
 
-- 现场判据与原始输出：`D:\dsh\card-08-ack-receipt.md` §6（哪几台机回了执、房间里的原文、`/state.ack` 的数值、以及**哪几台没回执、新信号怎么说的**）。
+- 现场判据与原始输出：`<workdir>\card-08-ack-receipt.md` §6（哪几台机回了执、房间里的原文、`/state.ack` 的数值、以及**哪几台没回执、新信号怎么说的**）。
 - 控制机纪律：**没有**重启/升级控制机（本会话所在）；**没有**重启房主小婷（未发通知前不动房主）；每次 exec 都会在房间留一条 `[org:exec:result]` 回显——已知噪音，本版不修。
 
 ---
@@ -187,9 +187,9 @@ SUITES=20  TESTS=138  PASS=138  FAIL=0
 ## 8. 交付物与复现入口
 
 ```powershell
-$REPO = "D:\dsh\ITPM\数创港项目\dsh-agent-room"
-$OLD  = "C:\Users\scorp\.dsh\profiles\web\node_modules\dsh-agent-room\lib"   # 只读：部署中的 0.1.45
-$GATE = "D:\dsh\_fix-46\gate-ack-receipt.mjs"
+$REPO = "C:\work\项目\dsh-agent-room"
+$OLD  = "<home>\.dsh\profiles\web\node_modules\dsh-agent-room\lib"   # 只读：部署中的 0.1.45
+$GATE = "<workdir>\_fix-46\gate-ack-receipt.mjs"
 
 # 类型 + 构建
 cd $REPO; npx tsc --noEmit; node build.mjs
@@ -205,7 +205,7 @@ cd $REPO; Get-ChildItem test\*.test.mjs, test\*.e2e.mjs | ForEach-Object { node 
 $env:AR_LIB = $OLD; node ($REPO + "\test\ack.test.mjs")     # 期望 1 pass / 11 fail
 
 # 原始输出留档
-#   D:\dsh\_fix-46\gate-old.txt  gate-new.txt  suite-oldlib.txt
+#   <workdir>\_fix-46\gate-old.txt  gate-new.txt  suite-oldlib.txt
 ```
 
 ---
@@ -265,6 +265,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "C:\studio\upgrade-studio.ps
 
 ## 12. 卡与发布物
 
-- 方案卡：`D:\dsh\card-08-ack-receipt.md`（机理依据 / 阈值来源 / 判据原始输出 / 回滚 / 跨机 / 自评）。
-- 缺陷账本：`D:\dsh\studio-defect-list.md` 新增 **D-36**。
+- 方案卡：`<workdir>\card-08-ack-receipt.md`（机理依据 / 阈值来源 / 判据原始输出 / 回滚 / 跨机 / 自评）。
+- 缺陷账本：`<workdir>\studio-defect-list.md` 新增 **D-36**。
 - ⚠️ **本文件位于包内**，所以包的 md5 无法写在本文件里（写入即改变哈希）。权威记录在**包外**两处：卡⑧ §6「发布物记录」，以及房间消息。0.1.45 的同一约定见其 §13。

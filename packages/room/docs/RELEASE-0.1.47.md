@@ -10,7 +10,7 @@
 | 结构性不能干活 | `activation.noResidentAgent` + `resolvedViaNone`（其余 `resolvedVia*` 全 0）+ `lastResidentOk:0` ⇒ **只读 `/state` 就能判定这台机收不了活**（小黄现场） | **0.1.47** |
 | 静默停止 | 小麦式「`dispatching followup` 之后什么都没有」＝ `acceptedNoOutput`（窗口超时）+ 一行 `ACCEPTED BUT NO OUTPUT`；被拒＝`followupRefused` / `refusedNoOutput`（两个桶永不混） | **0.1.47** |
 | 不回归 | 0.1.45 规则行为 + 0.1.46 回执契约 **逐条回归锁**（新旧双跑均绿）；`GET /state` 的 `wake`/`ack` 两块**一个键不动** | **0.1.47** |
-| 卡 | `D:\dsh\card-09-wake-activation.md`（方案卡 ⑨，含旧/新门禁原始输出与现场证明） | 本版同步 |
+| 卡 | `<workdir>\card-09-wake-activation.md`（方案卡 ⑨，含旧/新门禁原始输出与现场证明） | 本版同步 |
 
 ---
 
@@ -112,8 +112,8 @@ wakeDriver(wakeAfterAbort = false) {
 | `docs/RELEASE-0.1.47.md` | 本文件 |
 | `package.json` | 版本 0.1.46 → 0.1.47 |
 | `lib/**` | `node build.mjs` 重新生成（含 `lib/host/activation.js`） |
-| （工作区，不在包内）`D:\dsh\_fix-47\gate-wake-activation.mjs` | 双向门禁脚本：**同一套 15 条期望**，分别打 0.1.46 装机产物与本版 |
-| （工作区，不在包内）`D:\dsh\card-09-wake-activation.md` | 方案卡 ⑨（含现场证明原始输出与发布物记录） |
+| （工作区，不在包内）`<workdir>\_fix-47\gate-wake-activation.mjs` | 双向门禁脚本：**同一套 15 条期望**，分别打 0.1.46 装机产物与本版 |
+| （工作区，不在包内）`<workdir>\card-09-wake-activation.md` | 方案卡 ⑨（含现场证明原始输出与发布物记录） |
 
 **明确没做**：不改协议与写盘格式；不动 `wake.ts`（规则/水位线/拒绝政策/窗口）/`ack.ts`（回执去重/限速/机器帧）/`dedupe.ts`/镜像收敛/self-join/BOM 身份；**不修** `pendingSkips`（跳过是设计）；**不做**激活条的落盘与重启续做；**不做** `transcript` 证据之外的会话级解析（例如「模型是否已产出第一个 token」）。
 
@@ -121,12 +121,12 @@ wakeDriver(wakeAfterAbort = false) {
 
 ## 5. 发布门禁：同一脚本，先量旧构建，再量本版
 
-### 5.1 双向门禁（`D:\dsh\_fix-47\gate-wake-activation.mjs`，15 条期望）
+### 5.1 双向门禁（`<workdir>\_fix-47\gate-wake-activation.mjs`，15 条期望）
 
 ```
-PS> node D:\dsh\_fix-47\gate-wake-activation.mjs "D:\dsh\ITPM\数创港项目\dsh-agent-room\_old046\lib" "...\_old046\src"
+PS> node <workdir>\_fix-47\gate-wake-activation.mjs "C:\work\项目\dsh-agent-room\_old046\lib" "...\_old046\src"
 === summary: 2/15 expectations hold on this build ===      （exit=1）   ← OLD = git archive HEAD 的真实 0.1.46
-PS> node D:\dsh\_fix-47\gate-wake-activation.mjs "D:\dsh\ITPM\数创港项目\dsh-agent-room\lib"
+PS> node <workdir>\_fix-47\gate-wake-activation.mjs "C:\work\项目\dsh-agent-room\lib"
 === summary: 15/15 expectations hold on this build ===     （exit=0）   ← NEW = 本版
 ```
 
@@ -231,7 +231,7 @@ SUITES=21  TESTS=152  PASS=152  FAIL=0
 
 ## 7. 真机现场验证
 
-现场原始输出**写在卡里**（`D:\dsh\card-09-wake-activation.md` §6），本节只写纪律与判据：
+现场原始输出**写在卡里**（`<workdir>\card-09-wake-activation.md` §6），本节只写纪律与判据：
 
 - **旧侧现场复现（升级前，小麦仍在 0.1.46）**：控制机 `POST /rooms/01a098a2-…/chat {"human":false}` 点名 小麦 → `seq=4538 woken=1`；小麦自己的日志：`listening: woken seq=4538 … (from=KEVINKIKI, rule=mention)` + `ack: receipt posted … line="[ack] 小麦 已接手 seq=4538"`；小麦 `/state`：`activation=null`，`wake.woken:1→2`，`ack.maxAckedSeq=4538`；房间：**除那条插件自己的 `[ack]` 外，小麦没有再产出一行**。⇒ 旧版「唤醒到了、回执回了、什么也没产生」在真机上逐字复现。
 - **新侧现场验收**：小麦升级 0.1.47 后同一动作重做一次（新 seq），要求看到链上每一步的行、计数移动、以及**小麦真的产出**（或如果仍然不能，新计数**精确说出是哪一步失败**）。卡里贴原始行。
@@ -244,9 +244,9 @@ SUITES=21  TESTS=152  PASS=152  FAIL=0
 ## 8. 交付物与复现入口
 
 ```powershell
-$REPO = "D:\dsh\ITPM\数创港项目\dsh-agent-room"
+$REPO = "C:\work\项目\dsh-agent-room"
 $OLD  = "$REPO\_old046\lib"          # git archive HEAD（0.1.46）解出来的真实旧构建
-$GATE = "D:\dsh\_fix-47\gate-wake-activation.mjs"
+$GATE = "<workdir>\_fix-47\gate-wake-activation.mjs"
 
 cd $REPO; npx tsc --noEmit; node build.mjs
 
@@ -261,7 +261,7 @@ Get-ChildItem test\*.test.mjs, test\*.e2e.mjs | ForEach-Object { node $_.FullNam
 $env:AR_LIB = $OLD; node ($REPO + "\test\wake-activation.test.mjs")     # 期望 1 pass / 13 fail
 
 # 原始输出留档
-#   D:\dsh\_fix-47\gate-old.txt  gate-new.txt  suite-oldlib.txt  wa.out.txt
+#   <workdir>\_fix-47\gate-old.txt  gate-new.txt  suite-oldlib.txt  wa.out.txt
 ```
 
 ---
@@ -322,7 +322,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<studio>\upgrade-studio.ps1
 
 ## 12. 卡与发布物
 
-- 方案卡：`D:\dsh\card-09-wake-activation.md`（机理依据 / 阈值来源 / 判据原始输出 / 回滚 / 跨机 / 自评）。
-- 缺陷账本：`D:\dsh\studio-defect-list.md` 新增 **D-38**（本版：唤醒不启动 / 链上可观测 + 有界自升级）与 **D-39**（现场新发现：`detached: true` 启动的 powershell 在这台 Windows 机上**静默退出 0 且什么都不跑**）。
+- 方案卡：`<workdir>\card-09-wake-activation.md`（机理依据 / 阈值来源 / 判据原始输出 / 回滚 / 跨机 / 自评）。
+- 缺陷账本：`<workdir>\studio-defect-list.md` 新增 **D-38**（本版：唤醒不启动 / 链上可观测 + 有界自升级）与 **D-39**（现场新发现：`detached: true` 启动的 powershell 在这台 Windows 机上**静默退出 0 且什么都不跑**）。
   ⚠️ 编号说明：本版最初登记的编号是 D-37，但**同一时段另一路 worker 的现场定位（值守 agent 没有模型）先占用了 D-37**；本版对应条目因此为 D-38 / D-39。发布说明与卡里都已按实际编号更正。
 - ⚠️ **本文件位于包内**，所以包的 md5 无法写在本文件里（写入即改变哈希）。权威记录在**包外**两处：卡⑨ §6「发布物记录」，以及房间消息。

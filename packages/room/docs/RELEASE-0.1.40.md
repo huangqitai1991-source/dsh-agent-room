@@ -66,10 +66,10 @@ HTTP_STATUS=404
 
 ### 4.2 进程内：磁盘改名对运行中的进程不可见，**必须重启**才生效
 
-探针 `D:\dsh\_rename-old-evidence.mjs`（真构建产物 `lib/host/room-service.js`，`dataDir` 指向 `D:\dsh\_rename-old-evidence\` 临时目录；**不启停任何服务、不改本机身份、不触网**）：
+探针 `<workdir>\_rename-old-evidence.mjs`（真构建产物 `lib/host/room-service.js`，`dataDir` 指向 `<workdir>\_rename-old-evidence\` 临时目录；**不启停任何服务、不改本机身份、不触网**）：
 
 ```
-PS> cd D:\dsh; node _rename-old-evidence.mjs
+PS> cd <workdir>; node _rename-old-evidence.mjs
 === OLD-1: the running process caches the identity; a disk edit is invisible ===
   identity.json on disk before edit : OLD-NAME
   booted instance getIdentity()     : OLD-NAME
@@ -127,7 +127,7 @@ authorization call in updateNode: false
 
 ## 5. 发布门禁第 2 步 — NEW 行为（同一次改名，原始输出）
 
-探针 `D:\dsh\_rename-new-evidence.mjs`（**真构建产物**：`AgentRoomService` / `RoomService` / **真 `createRouter`（就是注册到 3080 的那个）**；org 侧用**真 `src/host/permission.js`** 授权判定 + 真 `org-state.json` 写盘）：
+探针 `<workdir>\_rename-new-evidence.mjs`（**真构建产物**：`AgentRoomService` / `RoomService` / **真 `createRouter`（就是注册到 3080 的那个）**；org 侧用**真 `src/host/permission.js`** 授权判定 + 真 `org-state.json` 写盘）：
 
 ```
 === NEW-1: three stores BEFORE the rename ===
@@ -243,7 +243,7 @@ node tools/repair-identity.mjs --home "%USERPROFILE%\.dsh" --repair-names --appl
 ## 9. 每台机器自己就能跑（今日规则）
 
 ```powershell
-$ar = 'D:\dsh\ITPM\数创港项目\dsh-agent-room'
+$ar = 'C:\work\项目\dsh-agent-room'
 
 # 0) 只读：本机是不是有改名路由了（旧构建 404 / 新构建 200）
 curl.exe -s -o - -w "`nHTTP=%{http_code}`n" -X POST -H "content-type: application/json" -d "{\"nickname\":\"\"}" http://127.0.0.1:3080/agent-room-api/profile
@@ -281,7 +281,7 @@ node $ar\test\bom-identity.test.mjs          # pass 14
 
 ```powershell
 # 1) 升级前归档日志（团队铁律）
-node D:\dsh\archive-log.cjs --file <该机>\studio.log
+node <workdir>\archive-log.cjs --file <该机>\studio.log
 # 2) 安装 tarball（各机自己的看门狗拉起）
 dsh-agent-room-0.1.40.tgz        # 见发布记录里的 md5
 # 3) 校验（新构建）
@@ -297,12 +297,12 @@ curl.exe -s -X POST -H "content-type: application/json" -d "{\"nickname\":\"\"}"
 5. `profileFanout` 长期为 0 但确有已加入房间（扇出被削弱）；
 6. 15 s tick 的 profile 推送消失（`members` 事件不再周期出现）。
 
-**备份路径（写前自动落的，绝对路径 + 时间戳）**：`<dirname(DSH_HOME)>\identity-backups\identity.json.<yyyyMMdd-HHmmss>.bak`（本机默认即 `C:\Users\scorp\identity-backups\`，可用 `DSH_IDENTITY_BACKUP_DIR` 覆盖）；回填工具另落 `<...>.pre-name-repair.bak`。
+**备份路径（写前自动落的，绝对路径 + 时间戳）**：`<dirname(DSH_HOME)>\identity-backups\identity.json.<yyyyMMdd-HHmmss>.bak`（本机默认即 `<home>\identity-backups\`，可用 `DSH_IDENTITY_BACKUP_DIR` 覆盖）；回填工具另落 `<...>.pre-name-repair.bak`。
 
 **回滚命令**
 
 ```powershell
-$repo = 'D:\dsh\ITPM\数创港项目\dsh-agent-room'
+$repo = 'C:\work\项目\dsh-agent-room'
 $bk   = '<发布前备份目录>'      # 见发布记录
 Copy-Item "$bk\src\host\service.ts"     "$repo\src\host\service.ts"     -Force
 Copy-Item "$bk\src\host\safety.ts"      "$repo\src\host\safety.ts"      -Force

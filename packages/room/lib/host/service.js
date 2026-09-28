@@ -58,7 +58,7 @@ export function containsDirectory(root, candidate) {
  * MEASURED ON 小麦, 2026-09-15, first hand — the reason 0.1.48 still produced no output:
  * every `pwsh` call in the session the plugin asked the host to create died BEFORE RUNNING with
  *   `Error: Windows ACL temp root must be outside the workspace:
- *    workspace=C:\Users\Administrator; temp=C:\Users\Administrator\AppData\Local\Temp`
+ *    workspace=<home>; temp=<home>\AppData\Local\Temp`
  * because `dsh-host-apiproxy` was handed `cwd = homedir()` — and `%TEMP%` lives INSIDE the home
  * directory. The model then escalated to `danger-full-access` (`approval/asked`), nobody answers
  * an approval in a duty session, and the turn ended with the message never posted.
@@ -566,8 +566,8 @@ export class AgentRoomService extends Service {
          * (`turn/start`, reasoning, token usage) — and still nothing came out, because the prompt's
          * reply route (there is no `room_send` tool in a host-created session) is `pwsh`, and every
          * `pwsh` call in that workspace failed before running with
-         *   `Windows ACL temp root must be outside the workspace: workspace=C:\Users\Administrator;
-         *    temp=C:\Users\Administrator\AppData\Local\Temp`
+         *   `Windows ACL temp root must be outside the workspace: workspace=<home>;
+         *    temp=<home>\AppData\Local\Temp`
          * (`cwd` was `homedir()`, and `%TEMP%` lives inside the home directory). The turn then sat on
          * an `approval/asked` nobody can answer and ended with no output, for ever.
          *
@@ -1228,8 +1228,8 @@ export class AgentRoomService extends Service {
             // Workspace session dirs encode the path (verified against the on-disk
             // layout): drive colon is DROPPED, backslash -> "-", and any char outside
             // [A-Za-z0-9_.-] becomes "~" + 4-hex UTF-16 code unit.
-            //   "D:\dsh"            -> "--D-dsh--"
-            //   "D:\dsh\ITPM\数创港项目" -> "--D-dsh-ITPM-~6570~521B~6E2F~9879~76EE--"
+            //   "C:\work"      -> "--C-work--"
+            //   "C:\work\项目" -> "--C-work-~9879~76EE--"
             const encode = (s) => s
                 .replace(/:/g, "")
                 .replace(/[\\/]/g, "-")
@@ -2943,7 +2943,7 @@ export class AgentRoomService extends Service {
      * has already recorded `open`. Both handlers wrote the same Map entry, so the
      * last writer — the DEAD client — won:
      *
-     *   小黄 relay → lan:  bridge={kind:"relay",state:"closed",address:"ws://42.193.189.15:9320"}
+     *   小黄 relay → lan:  bridge={kind:"relay",state:"closed",address:"ws://relay.example:9320"}
      *   小麦 lan → relay:  bridge=direct/closed
      *
      * while the channel was demonstrably alive on the other side of the same room
@@ -3584,7 +3584,7 @@ export class AgentRoomService extends Service {
             // alone, and `connInfo` accepted writes from RoomClients that had already
             // been replaced — so after a relay ⇄ lan switch it described the dead
             // connection while the live one was healthy (小黄 relay→lan reported
-            // `relay/closed` at `ws://42.193.189.15:9320` while `/chat` answered
+            // `relay/closed` at `ws://relay.example:9320` while `/chat` answered
             // `confirmedByOwner:true`). `joinedBridge()` derives the field from the
             // live client, and `recordConnInfo()` no longer lets a dead client write.
             const bridgeState = isOwned

@@ -12,7 +12,7 @@
  *      destroying the file (the defect, reproduced);
  *   2. it drives the REAL built plugin and shows the new semantics.
  *
- * Every case writes only under `D:\dsh\_bom-tests\` and points both DSH_HOME and
+ * Every case writes only under `<workdir>\_bom-tests\` and points both DSH_HOME and
  * DSH_IDENTITY_BACKUP_DIR at that temp tree, so no real configuration is read or
  * written. Run directly:  node test/bom-identity.test.mjs
  */
@@ -44,7 +44,7 @@ import {
   stripBom,
 } from "../lib/host/safety.js";
 
-const ROOT = "D:\\dsh\\_bom-tests";
+const ROOT = "<workdir>\\_bom-tests";
 const AGENT_ID = "01a0231b-bbe5-720a-97a4-819744eeae76";
 const OTHER_ID = "01a09dac-3793-77b1-b6e8-9e4ebdb4041e";
 const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
@@ -335,7 +335,7 @@ test("NEW: an identity write takes a verified timestamped backup first, and rete
 });
 
 test("NEW: the backup root is derived per platform, never a hardcoded drive letter", async () => {
-  const home = "C:\\Users\\example\\.dsh";
+  const home = "<home>\\.dsh";
   process.env.DSH_HOME = home;
   delete process.env.DSH_IDENTITY_BACKUP_DIR;
   assert.equal(resolveBackupRoot(), join(dirname(home), "identity-backups"), "a sibling of the DSH home, not inside it");
@@ -346,10 +346,10 @@ test("NEW: the backup root is derived per platform, never a hardcoded drive lett
 
   // The card's must-fix: a Windows-only root on the team's macOS node must be a
   // fatal config error, not "every identity write is refused".
-  assert.throws(() => assertPlatformResolvableFor("D:\\dsh\\identity-backups", "darwin"), /Windows-only path/);
+  assert.throws(() => assertPlatformResolvableFor("<workdir>\\identity-backups", "darwin"), /Windows-only path/);
   assert.throws(() => assertPlatformResolvableFor("\\\\server\\share\\backups", "darwin"), /Windows-only path/);
   assert.doesNotThrow(() => assertPlatformResolvableFor("/Users/maishuting/.dsh-backups", "darwin"));
-  assert.doesNotThrow(() => assertPlatformResolvableFor("D:\\dsh\\identity-backups", "win32"));
+  assert.doesNotThrow(() => assertPlatformResolvableFor("<workdir>\\identity-backups", "win32"));
   assert.throws(() => assertPlatformResolvableFor("relative\\path", "win32"), /not absolute/);
 
   // And the root is proven writable at boot, so an unusable one stops the node

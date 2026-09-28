@@ -109,7 +109,7 @@ web 路由与工具都传 `await …localAgentId()`、`localAgentId` 里 `getIde
 ## 6. 每台机器自己就能跑
 
 ```powershell
-$ao = 'D:\dsh\ITPM\数创港项目\dsh-agent-org'
+$ao = 'C:\work\项目\dsh-agent-org'
 
 # 只读：本机的角色与组织树（判断自己是不是 org owner）
 curl.exe -s http://127.0.0.1:3080/agent-org-api/me
@@ -140,7 +140,7 @@ node $ao\test\bom-org-state.test.mjs        # pass 11
 
 ```powershell
 # 1) 归档日志
-node D:\dsh\archive-log.cjs --file <该机>\studio.log
+node <workdir>\archive-log.cjs --file <该机>\studio.log
 # 2) 安装 tarball（各机自己的看门狗拉起）
 dsh-agent-org-0.2.12.tgz        # md5 见发布记录
 # 3) 只读校验
@@ -153,12 +153,12 @@ curl.exe -s http://127.0.0.1:3080/agent-org-api/me
 3. `audit.jsonl` 出现 `result:"denied"` 暴涨（说明有调用路径拿不到身份，`localAgentId()` 返回了空）；
 4. 组织树节点丢失或出现重复成员（改名被写歪）。
 
-**备份路径**：`<dirname(DSH_HOME)>\identity-backups\org-state.json.<yyyyMMdd-HHmmss>.bak`（默认本机 `C:\Users\scorp\identity-backups\`；`DSH_IDENTITY_BACKUP_DIR` 可覆盖）。
+**备份路径**：`<dirname(DSH_HOME)>\identity-backups\org-state.json.<yyyyMMdd-HHmmss>.bak`（默认本机 `<home>\identity-backups\`；`DSH_IDENTITY_BACKUP_DIR` 可覆盖）。
 
 **回滚命令**
 
 ```powershell
-$org = 'D:\dsh\ITPM\数创港项目\dsh-agent-org'
+$org = 'C:\work\项目\dsh-agent-org'
 $bk  = '<发布前备份目录>'      # 见发布记录
 Copy-Item "$bk\permission.js"  "$org\src\host\permission.js"  -Force
 Copy-Item "$bk\service.js"     "$org\src\host\service.js"     -Force

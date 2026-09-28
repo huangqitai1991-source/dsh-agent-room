@@ -3,7 +3,7 @@
  * dsh-agent-room -- MACHINE FACTS (the measured layer the canary gate judges on)
  *
  * WHY THIS FILE EXISTS (defect D-45, 2026-09-15)
- *   The canary gate could never pass. `D:\dsh\release-gate.config.json` pointed its canary at
+ *   The canary gate could never pass. `release-gate.config.json` pointed its canary at
  *   `release-machines/<id>/version` -- a directory that was never created -- and left
  *   upgrade/postUpgradeVerify/rollback null, so `gateCanary()` refused at machineRecord() (:505)
  *   and again at the verify hook (:511). The only ways past it were to TYPE the answer into the
@@ -40,7 +40,7 @@
  *
  * THE COMMANDS ARE NOT GUESSES
  *   TEMPLATE_POSIX below was executed against a live macOS node on 2026-09-15 and its verbatim
- *   output is kept at D:\dsh\_facts-proof\raw-huang-verified.txt (688 B, md5
+ *   output is kept at <workdir>\_facts-proof\raw-verified.txt (688 B, md5
  *   BC96A7815EFFD6D70F66C99B61302654). The Windows template is verified on this machine with
  *   `--local`; see --help. Payloads must stay short: the exec plane hard-kills at 30 s, and a
  *   whole-disk `find $HOME` looks identical to "the machine did not answer".
@@ -59,8 +59,8 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 export const SCHEMA = "room-machine-facts/1";
-export const DEFAULT_CONFIG = "D:\\dsh\\release-gate.config.json";
-export const DEFAULT_OUT = "D:\\dsh\\machine-facts.json";
+export const DEFAULT_CONFIG = "<workdir>\\release-gate.config.json";
+export const DEFAULT_OUT = "<workdir>\\machine-facts.json";
 export const DEFAULT_API = "http://127.0.0.1:3080/agent-org-api/exec";
 export const DEFAULT_TIMEOUT_MS = 30000;
 /** The exec plane kills at 30 s. A facts file older than this may not carry a release. */
@@ -322,7 +322,7 @@ export function factsFile({ probedAt, probedBy, source, mode, machines }) {
  * the same ROOMFACTS block. Usage: `--via node` sends
  * `cd <dir> && curl.exe -s -o probe-machine.mjs <url> && node probe-machine.mjs`.
  */
-export function nodeProbeCommand({ dir = "C:\\studio", url = "http://42.193.189.15:8090/probe-machine.mjs" } = {}) {
+export function nodeProbeCommand({ dir = "C:\\studio", url = process.env.PROBE_URL ?? "http://your-host:8090/probe-machine.mjs" } = {}) {
   return `cd ${dir} && curl.exe -s -o probe-machine.mjs ${url} && node probe-machine.mjs`;
 }
 

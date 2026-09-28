@@ -54,7 +54,7 @@ Humans: open the room dock under the conversation input, pick a room, toggle **ä
 ## Release (the only supported path)
 
 ```sh
-node tools/release.mjs --version 0.1.51 --evidence D:\dsh\evidence-0.1.51.json --author <you>
+node tools/release.mjs --version 0.1.51 --evidence <workdir>\evidence-0.1.51.json --author <you>
 ```
 
 `tools/release.mjs` is **the only supported way to produce and publish a release artifact**. It runs the four release gates (version-count / evidence / acceptance / canary) **first**, and packs with `npm pack` only if they all allow. Then it uploads the `.tgz`, reads it back over HTTP and compares the md5, and writes `{ts, version, gate:"publish", verdict, artifact, md5, actor}` into the ledger so a shipped file can be traced to the gate run that allowed it.

@@ -52,10 +52,10 @@
 **门禁脚本**（同一支断言集、两侧都是**真代码**）：
 
 ```powershell
-PS> powershell -File D:\dsh\_probe\run-gate.ps1
+PS> powershell -File <workdir>\_probe\run-gate.ps1
 ```
 
-- **OLD 侧** = **已部署的 0.1.41 安装**：`C:\Users\scorp\.dsh\profiles\web\node_modules\dsh-agent-room\lib`
+- **OLD 侧** = **已部署的 0.1.41 安装**：`<home>\.dsh\profiles\web\node_modules\dsh-agent-room\lib`
   （`lib/host/service.js` = **106278 B**，sha256[0:16]=`E4CA4DC077BA1DD8`，**只读**，从不写入）。
   证据强度：仓库里那份用于对照的 `lib-old-0.1.41/` 与部署安装**逐字节相同**（`service.js`/`persistence.js`/`room-service.js`
   三份 sha256[0:16] 全部一致：`E4CA4DC077BA1DD8` / `267BE226EC314D5F` / `848F549DD69A7678`），
@@ -256,26 +256,26 @@ unref'd 看门狗 + 有界硬退出），这是本版能跑完流水线的前提
 **合计 15 套件 / 100 pass / 0 fail，全部退出码 0。**
 
 `npx tsc --noEmit` 干净（exit 0）；`node build.mjs` 成功（`built lib/host/*, lib/client.js, lib/skills/`）。
-> 运行时 stderr 有一行 `[agent-room] backup root C:\Users\scorp\identity-backups is NOT writable (EPERM …)`：
+> 运行时 stderr 有一行 `[agent-room] backup root <home>\identity-backups is NOT writable (EPERM …)`：
 > 本会话文件沙箱不允许写工作区之外，属 **0.1.38 既有行为**（拒写而不是覆盖），与本版改动无关。
 
 ## 8. 交付物与复现入口
 
 ```powershell
 # 门禁（同一断言集跑两侧；OLD 侧先失败、NEW 侧通过）
-powershell -File D:\dsh\_probe\run-gate.ps1
+powershell -File <workdir>\_probe\run-gate.ps1
 
 # 两个新套件（都必须在 30 s 内自行退出，退出码 0）
-node D:\dsh\ITPM\数创港项目\dsh-agent-room\test\bridge-state.test.mjs
-node D:\dsh\ITPM\数创港项目\dsh-agent-room\test\listening.test.mjs
+node C:\work\项目\dsh-agent-room\test\bridge-state.test.mjs
+node C:\work\项目\dsh-agent-room\test\listening.test.mjs
 
 # 全量回归：逐个 node test/<name>.mjs（见 §7 表）
 ```
 
-tarball：`dsh-agent-room-0.1.42.tgz`（`npm.cmd pack --ignore-scripts --cache D:\dsh\.npm-cache`）。
-size / md5 记录在 `D:\dsh\_release-0.1.42-artifact.txt` 并随上传一并核对——**tarball 无法自述自身的 md5**，
+tarball：`dsh-agent-room-0.1.42.tgz`（`npm.cmd pack --ignore-scripts --cache <workdir>\.npm-cache`）。
+size / md5 记录在 `<workdir>\_release-0.1.42-artifact.txt` 并随上传一并核对——**tarball 无法自述自身的 md5**，
 故不写进本文件（避免「改了 md5 就得重打包、重打包又改 md5」的循环）。打包前已把用于对照的临时目录
-`lib-old-0.1.41/` **移出仓库**（→ `D:\dsh\_probe\lib-old-0.1.41`），并用 `tar -tzf` 证明它不在包里。
+`lib-old-0.1.41/` **移出仓库**（→ `<workdir>\_probe\lib-old-0.1.41`），并用 `tar -tzf` 证明它不在包里。
 
 ## 9. 上线与回滚
 
@@ -283,10 +283,10 @@ size / md5 记录在 `D:\dsh\_release-0.1.42-artifact.txt` 并随上传一并核
 
 ```powershell
 # 1) 升级前先归档日志（团队铁律）
-node D:\dsh\archive-log.cjs --file <该机>\studio.log
+node <workdir>\archive-log.cjs --file <该机>\studio.log
 # 2) 升级插件（各机看门狗自行拉起）
-npm.cmd pack --ignore-scripts --cache D:\dsh\.npm-cache      # 产出 dsh-agent-room-0.1.42.tgz
-#    （或用已上传的 tarball：/home/ubuntu/studio-files/dsh-agent-room-0.1.42.tgz）
+npm.cmd pack --ignore-scripts --cache <workdir>\.npm-cache      # 产出 dsh-agent-room-0.1.42.tgz
+#    （或用已上传的 tarball：/path/to/studio-files/dsh-agent-room-0.1.42.tgz）
 # 3) 升级后立刻读状态：桥接字段必须与 confirmedByOwner 一致
 curl -s http://127.0.0.1:3080/agent-room-api/state
 #    看 rooms[].bridge.kind/state/address 与 bridgeTruth.{connDrops,connReplaced,tracked}
@@ -307,14 +307,14 @@ curl -s http://127.0.0.1:3080/agent-room-api/state
 **回滚命令**
 
 ```powershell
-$repo = (Resolve-Path 'D:\dsh\ITPM\*\dsh-agent-room').Path
+$repo = (Resolve-Path '<workdir>\\*\dsh-agent-room').Path
 git -C $repo checkout -- src/host/service.ts src/host/persistence.ts src/host/room-service.ts package.json
 git -C $repo checkout -- lib/host/service.js lib/host/persistence.js lib/host/room-service.js
 Remove-Item "$repo\test\bridge-state.test.mjs","$repo\test\listening.test.mjs" -Force
 node "$repo\build.mjs"
 ```
 
-**回滚后校验**：`node D:\dsh\_probe\run-gate.ps1` 会在 OLD 侧复现 ⑤/⑥ 的旧行为（即回到「桥接被死连接改写」「没有
+**回滚后校验**：`node <workdir>\_probe\run-gate.ps1` 会在 OLD 侧复现 ⑤/⑥ 的旧行为（即回到「桥接被死连接改写」「没有
 `listening.json`」），而 NEW 侧的 `bridgeTruth` 字段与 `listening.json` 都会消失。
 **回滚不了的部分**：① 已经写在各机 dataDir 里的 `listening.json`（回滚后会变成一个**没人读**的偏好文件，无害，
 但下一次升级回 0.1.42 时会**立刻生效**——若那时某房间的意图已过期，请手工删除该文件）；
@@ -339,5 +339,5 @@ node "$repo\build.mjs"
 7. **两个新套件的 300 ms 有界硬退出**（§5.4）在 NEW 构建上不触发，但它是**代码里存在的一条退出路径**：
    若将来 NEW 构建也出现泄漏，它会把泄漏**打印出来**（`TEARDOWN: … still ref'd`）并仍然给出确定退出码，
    而不是静默吞掉——这一设计**未**在「人为注入泄漏」的条件下验证过。
-8. **门禁脚本的仓库路径是本机解析的**（`Resolve-Path 'D:\dsh\ITPM\*\dsh-agent-room'`），跨机重跑需确认该通配只匹配一个仓库；
+8. **门禁脚本的仓库路径是本机解析的**（`Resolve-Path '<workdir>\\*\dsh-agent-room'`），跨机重跑需确认该通配只匹配一个仓库；
    OLD 侧可用 `AR_LIB` / `AR_SRC` 指向任意旧构建与旧源码。

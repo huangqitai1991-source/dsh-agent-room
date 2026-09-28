@@ -10,7 +10,7 @@
 | 窗口 | 唤醒读取窗口 **20 → 200 行**，并把仍落在窗口外的消息**计数 + 命名** | **0.1.45**（评审驱动，见 §12） |
 | 发送侧 | `POST /chat` 与 `room_send` 返回 `woken` + `wake{targets,reasons,note}`（0.1.35 字段一个不删） | **0.1.45** |
 | 设计取舍 | **没有任何基于作者身份**的放行分支（第一稿有 `作者==controller`，被评审删除） | **0.1.45**（评审驱动，见 §12） |
-| 卡 | `D:\dsh\card-07-silent-wake-drop.md`（方案卡 ⑦，含全量回放与现场证明） | 本版同步 |
+| 卡 | `<workdir>\card-07-silent-wake-drop.md`（方案卡 ⑦，含全量回放与现场证明） | 本版同步 |
 
 ---
 
@@ -86,8 +86,8 @@ wake = 非自身作者(self)                        ← 卡④ 0.1.41，不动
 | `package.json` | 版本 0.1.44 → 0.1.45 |
 | `lib/**` | `node build.mjs` 重新生成 |
 | `docs/RELEASE-0.1.45.md` | 本文件 |
-| （工作区，不在包内）`D:\dsh\_fix-45\gate-wake-drop.mjs` | 双向门禁脚本：同一套 21 条期望，分别打 0.1.44 装机产物与本版，逐条打印 PASS/FAIL |
-| （工作区，不在包内）`D:\dsh\card-07-silent-wake-drop.md` | 方案卡 ⑦（机理依据 / 阈值来源 / 判据 / 原始输出 / 回滚 / 跨机 / 自评） |
+| （工作区，不在包内）`<workdir>\_fix-45\gate-wake-drop.mjs` | 双向门禁脚本：同一套 21 条期望，分别打 0.1.44 装机产物与本版，逐条打印 PASS/FAIL |
+| （工作区，不在包内）`<workdir>\card-07-silent-wake-drop.md` | 方案卡 ⑦（机理依据 / 阈值来源 / 判据 / 原始输出 / 回滚 / 跨机 / 自评） |
 
 **明确没做**：不改协议与写盘格式；不动 `dedupe.ts`、镜像收敛、self-join 守卫、BOM/身份安全、单调唤醒水位线；**不做** ack 回执平面（小捷建议 C）；**不修**「房间未监听 / `listenPending` 窗口」这两条同族静默路径（它们是规则层之前的分支，见 §10）。
 
@@ -95,12 +95,12 @@ wake = 非自身作者(self)                        ← 卡④ 0.1.41，不动
 
 ## 5. 发布门禁：先量新构建，再量**旧构建**
 
-### 5.1 同一门禁脚本，两侧对照（`D:\dsh\_fix-45\gate-wake-drop.mjs`）
+### 5.1 同一门禁脚本，两侧对照（`<workdir>\_fix-45\gate-wake-drop.mjs`）
 
 ```
-PS> node D:\dsh\_fix-45\gate-wake-drop.mjs "C:\Users\scorp\.dsh\profiles\web\node_modules\dsh-agent-room\lib"   # OLD = 部署中的 0.1.44
+PS> node <workdir>\_fix-45\gate-wake-drop.mjs "<home>\.dsh\profiles\web\node_modules\dsh-agent-room\lib"   # OLD = 部署中的 0.1.44
 === summary: 8/21 expectations hold on this build ===      （exit=1）
-PS> node D:\dsh\_fix-45\gate-wake-drop.mjs "D:\dsh\ITPM\数创港项目\dsh-agent-room\lib"                          # NEW = 本版
+PS> node <workdir>\_fix-45\gate-wake-drop.mjs "C:\work\项目\dsh-agent-room\lib"                          # NEW = 本版
 === summary: 21/21 expectations hold on this build ===     （exit=0）
 ```
 
@@ -123,7 +123,7 @@ FAIL  A … :: leaves a listening: line  expected=yes actual=no
 ### 5.2 套件级旧构建对照（`AR_LIB` 指向 0.1.44 装机产物）
 
 ```
-PS> $env:AR_LIB="C:\Users\scorp\.dsh\profiles\web\node_modules\dsh-agent-room\lib"; node test/wake.test.mjs
+PS> $env:AR_LIB="<home>\.dsh\profiles\web\node_modules\dsh-agent-room\lib"; node test/wake.test.mjs
 ℹ tests 17   ℹ pass 8   ℹ fail 9      （exit=1）
    —— 8 条 0.1.45 新断言 + 1 条 0.1.41 计数器形状断言（旧构建没有那 9 个键）全红
    —— 注：`0.1.45 static guard` 在旧构建上**通过**，因为它读的是本仓 `src/**`（AR_LIB 只改 lib）
@@ -142,7 +142,7 @@ PS> $env:AR_LIB="C:\Users\scorp\.dsh\profiles\web\node_modules\dsh-agent-room\li
 ### 5.3 现场复现 OLD（真机、真投递路径）
 
 ```
-PS> node D:\dsh\_fix-45\chat-post-file.mjs baseline-a.txt script 小捷     # human=false + mentions=["小捷"]
+PS> node <workdir>\_fix-45\chat-post-file.mjs baseline-a.txt script 小捷     # human=false + mentions=["小捷"]
 HTTP 200
 {"ok":true,"data":{"seq":3727,"acceptedByLocalHub":true,"confirmedByOwner":true,"confirmedSeq":3727,"confirmNote":"owner-confirmed","delivered":true,"queued":false}}
 ```
@@ -216,9 +216,9 @@ SUITES=19  TESTS=126  PASS=126  FAIL=0
 
 ### 7.2 NEW 侧（0.1.45，小捷机）— 在**本次打包之后**执行，原始输出不在本包内（有意）
 
-现场证明需要**先有这个包**（升级要走 `http://42.193.189.15:8090/dsh-agent-room-0.1.45.tgz`）。为了让「先打包 → 再现场」不变成「打包 → 改文档 → 再打包」（0.1.44 今晚为补文档重打包 4 次，把已公布的 md5 作废 3 次），本版把现场证明的原始输出**写在卡里**，而不是回头重打包：
+现场证明需要**先有这个包**（升级要走 `http://your-host:8090/dsh-agent-room-0.1.45.tgz`）。为了让「先打包 → 再现场」不变成「打包 → 改文档 → 再打包」（0.1.44 今晚为补文档重打包 4 次，把已公布的 md5 作废 3 次），本版把现场证明的原始输出**写在卡里**，而不是回头重打包：
 
-- `D:\dsh\card-07-silent-wake-drop.md` §6 [9]「现场证明（决定性）— NEW 侧」
+- `<workdir>\card-07-silent-wake-drop.md` §6 [9]「现场证明（决定性）— NEW 侧」
 - 判据（一句话）：把小捷升到 0.1.45，用**与 §5.3 完全相同**的投递方式（脚本路径、`human=false`、点名 `@小捷`）发一条，期望：她机日志出现 `woken seq=<n> … rule=mention`，且她本人回话。
 - 本包的 md5 因此**只发布一次**，之后不再变（除非出现必须重新发布的缺陷）。
 
@@ -234,9 +234,9 @@ SUITES=19  TESTS=126  PASS=126  FAIL=0
 ## 8. 交付物与复现入口
 
 ```powershell
-$REPO = "D:\dsh\ITPM\数创港项目\dsh-agent-room"
-$OLD  = "C:\Users\scorp\.dsh\profiles\web\node_modules\dsh-agent-room\lib"   # 只读：部署中的 0.1.44
-$GATE = "D:\dsh\_fix-45\gate-wake-drop.mjs"
+$REPO = "C:\work\项目\dsh-agent-room"
+$OLD  = "<home>\.dsh\profiles\web\node_modules\dsh-agent-room\lib"   # 只读：部署中的 0.1.44
+$GATE = "<workdir>\_fix-45\gate-wake-drop.mjs"
 
 # 类型 + 构建
 cd $REPO; npx tsc --noEmit; node build.mjs
@@ -252,7 +252,7 @@ cd $REPO; Get-ChildItem test\*.test.mjs, test\*.e2e.mjs | ForEach-Object { node 
 $env:AR_LIB = $OLD; node ($REPO + "\test\wake.test.mjs")     # 期望 8 pass / 9 fail
 
 # 原始输出留档
-#   D:\dsh\_fix-45\gate-old.txt   gate-new.txt   ev-jie-before.txt   ev-impact2.txt   suite-out2\*.txt
+#   <workdir>\_fix-45\gate-old.txt   gate-new.txt   ev-jie-before.txt   ev-impact2.txt   suite-out2\*.txt
 ```
 
 ---
@@ -267,7 +267,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "C:\studio\upgrade-studio.ps
 node C:/studio/ar45-probe-wake.mjs      # 期望 roomPlugin=0.1.45
 
 # 2) 现场判据（在控制机上投递；投递方式与 §5.3 逐字一致）
-node D:\dsh\_fix-45\chat-post-file.mjs D:\dsh\_fix-45\proof-45.txt script 小捷
+node <workdir>\_fix-45\chat-post-file.mjs <workdir>\_fix-45\proof-45.txt script 小捷
 #    然后在小捷机上：
 #    Select-String -Path C:\studio\studio.log -Pattern 'listening: woken' | Select-Object -Last 3
 #    期望出现 `rule=mention`
@@ -327,14 +327,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "C:\studio\upgrade-studio.ps
 file    : dsh-agent-room-0.1.45.tgz
 bytes   : <<< 见 §13.1（打包后回填，本文件在包内，因此本行只能写「打包即定」的说明）>>>
 md5     : <<< 同上 >>>
-built by: npm.cmd pack --ignore-scripts --cache D:\dsh\.npm-cache
-upload  : scp → ubuntu@42.193.189.15:/home/ubuntu/studio-files/（SSH_ASKPASS=D:\dsh\_askpass.cmd）
+built by: npm.cmd pack --ignore-scripts --cache <workdir>\.npm-cache
+upload  : scp → user@your-host:/path/to/studio-files/（SSH_ASKPASS=<workdir>\_askpass.cmd）
 verify  : ssh … "ls -l …; md5sum …"  —— 远端字节数与 md5 必须与本地逐位一致
 ```
 
 ⚠️ **本文件位于包内**，所以「包的 md5」无法写在本文件里而不改变它（写入即改变哈希）。**权威记录在包外**，只有两处：
 
-1. `D:\dsh\card-07-silent-wake-drop.md` §6 [10]「发布物记录」（含名称/字节数/md5/远端校验输出）；
+1. `<workdir>\card-07-silent-wake-drop.md` §6 [10]「发布物记录」（含名称/字节数/md5/远端校验输出）；
 2. 房间消息（seq 见卡内引用）里的同一组数字。
 
 ## 14. 卡⑦ §5 判据 15 的行号/口径更正（发布后未改动代码，仅更正文档口径）
@@ -357,7 +357,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\upgrade-st
 #    看监听：GET http://127.0.0.1:3080/agent-room-api/state 里该房 listening=true
 #    看计数：同一条 /state 的 wake 块里出现 deniedNotAddressed / wokenByMention（旧版没有这些键）
 # 3) 现场判据（控制机发、本机看）
-#    控制机：node D:\dsh\_fix-45\chat-post-file.mjs <含 @你昵称 的文本文件> script <你的昵称>
+#    控制机：node <workdir>\_fix-45\chat-post-file.mjs <含 @你昵称 的文本文件> script <你的昵称>
 #    本机  ：Select-String -Path C:\studio\studio.log -Pattern 'listening: (woken|denied)' | Select-Object -Last 5
 #    期望：出现 `woken seq=<n> … rule=mention` —— 这就是「派活真的叫醒了人」的唯一判据
 ```

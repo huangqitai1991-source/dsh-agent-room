@@ -659,7 +659,7 @@ guarded("0.1.48 static guard: the model is supplied at creation, verified, and s
  *
  *   TOOLCALL pwsh {"command": "Invoke-RestMethod …"}          ← the prompt's fallback route
  *   TOOLRESULT Error: Windows ACL temp root must be outside the workspace:
- *               workspace=C:\Users\Administrator; temp=C:\Users\Administrator\AppData\Local\Temp
+ *               workspace=<home>; temp=<home>\AppData\Local\Temp
  *   APPROVAL/ASKED {"toolName":"pwsh","reason":"escalate sandbox to danger-full-access: The sandboxed
  *                   shell cannot start at all …"}             ← nobody answers an approval in a duty
  *                                                               session ⇒ the turn ends with NO output
@@ -685,7 +685,7 @@ function need049(what) {
 }
 
 guarded("0.1.49: the session workspace is chosen so the sandboxed shell can start at all", async () => {
-  need049("小麦: workspace=C:\\Users\\Administrator contains %TEMP% ⇒ every pwsh call died before running");
+  need049("小麦: workspace=<home> contains %TEMP% ⇒ every pwsh call died before running");
   const { homedir, tmpdir } = await import("node:os");
   const { dirname, join: j } = await import("node:path");
   const temp = tmpdir();

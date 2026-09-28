@@ -57,7 +57,7 @@ export function stamp(now = new Date()) {
 /**
  * A config path is a CONFIG ERROR, not a per-write failure, when this platform
  * cannot resolve it: a Windows drive-absolute or UNC path is unrunnable on
- * POSIX. Version 0.2 of the card hardcoded `D:\dsh\identity-backups`; on the
+ * POSIX. Version 0.2 of the card hardcoded `<workdir>\identity-backups`; on the
  * team's macOS node there is no `D:\` volume, and because backup failure refuses
  * the write, that would have refused EVERY identity write — a safety gate turned
  * into an availability outage. Fail fast and loudly instead.

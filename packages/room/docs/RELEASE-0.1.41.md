@@ -56,10 +56,10 @@
 **门禁脚本**（同一场景、同一份假房间状态，两侧都用**真代码**，不是重写的近似版）：
 
 ```powershell
-PS> cd D:\dsh; node _repro-wake-plane-0.1.41.mjs
+PS> cd <workdir>; node _repro-wake-plane-0.1.41.mjs
 ```
 
-- **OLD 侧** = **已部署的 0.1.40 构建**（`C:\Users\scorp\.dsh\profiles\web\node_modules\dsh-agent-room\lib\host\service.js`，
+- **OLD 侧** = **已部署的 0.1.40 构建**（`<home>\.dsh\profiles\web\node_modules\dsh-agent-room\lib\host\service.js`，
   sha256[0:16]=`00f2aee5f3595e1c`，97589 B，**无** `lib/host/wake.js`）。规则层 / 游标写入 / 唤醒标签由正则从该构建产物
   **逐字抽取后直接执行**（`new Function`），构建一变就 FATAL 退出 ⇒ OLD 侧不可能与产出缺陷的那份代码漂移。
 - **NEW 侧** = **本仓 0.1.41 构建产物**（`lib/host/wake.js` 直接 import，`lib/host/service.js` 同样逐字抽取后执行）。
@@ -279,23 +279,23 @@ RESULT: GATE SATISFIED (old behaviour reproduced on the shipped 0.1.40 build, re
 | `wake.test.mjs`（**新增**） | —（旧版本连 `lib/host/wake.js` 都没有，无法加载） | **pass 8 / fail 0** |
 
 `npx tsc --noEmit` 干净（exit 0）；`node build.mjs` 成功（`built lib/host/*, lib/client.js, lib/skills/`）。
-> 运行时 stderr 有一行 `[agent-room] backup root C:\Users\scorp\identity-backups is NOT writable (EPERM …)`：
+> 运行时 stderr 有一行 `[agent-room] backup root <home>\identity-backups is NOT writable (EPERM …)`：
 > 本会话文件沙箱不允许写工作区之外，属 **0.1.38 既有行为**（拒写而不是覆盖），与本版改动无关。
 
 ## 8. 交付物与复现入口
 
 ```powershell
 # 门禁（旧行为先复现，新行为后通过；exit 0 = 满足）
-node D:\dsh\_repro-wake-plane-0.1.41.mjs
+node <workdir>\_repro-wake-plane-0.1.41.mjs
 
 # 新增套件（8 条）
-node D:\dsh\ITPM\数创港项目\dsh-agent-room\test\wake.test.mjs
+node C:\work\项目\dsh-agent-room\test\wake.test.mjs
 
 # 全量回归：逐个 node test/<name>.mjs（见 §7 表）
 ```
 
-tarball：`dsh-agent-room-0.1.41.tgz`（`npm.cmd pack --ignore-scripts --cache D:\dsh\.npm-cache`）。
-size / md5 记录在 `D:\dsh\_release-0.1.41-artifact.txt` 并随上传一并核对——**tarball 无法自述自身的 md5**，
+tarball：`dsh-agent-room-0.1.41.tgz`（`npm.cmd pack --ignore-scripts --cache <workdir>\.npm-cache`）。
+size / md5 记录在 `<workdir>\_release-0.1.41-artifact.txt` 并随上传一并核对——**tarball 无法自述自身的 md5**，
 故不写进本文件（避免「改了 md5 就得重打包、重打包又改 md5」的循环）。
 
 ## 9. 本版**没有**验证 / 主动排除的部分（如实列出）
@@ -314,7 +314,7 @@ size / md5 记录在 `D:\dsh\_release-0.1.41-artifact.txt` 并随上传一并核
    本版把 `wake.woken` / `wake.skipped` 做成计数器，就是为了让这件事**可被观测**而不是靠推理。
 6. **`wake.regressed` 的生产态标定**：单元测试里为 1（人为触发），生产应为 0；未在活体上观测过长期值。
 7. **远端 `human:true` 伪造**：见 §5 残余，本版不做协议层 provenance。
-8. **门禁脚本的仓库路径是本机绝对路径**（`D:\dsh\ITPM\数创港项目\dsh-agent-room`），跨机重跑需改这一行；
+8. **门禁脚本的仓库路径是本机绝对路径**（`C:\work\项目\dsh-agent-room`），跨机重跑需改这一行；
    OLD 侧可用 `ROOM_OLD_BUILD` 环境变量指向任意旧构建。
 
 ## 10. 上线与回滚
@@ -323,10 +323,10 @@ size / md5 记录在 `D:\dsh\_release-0.1.41-artifact.txt` 并随上传一并核
 
 ```powershell
 # 1) 升级前先归档日志（团队铁律）
-node D:\dsh\archive-log.cjs --file <该机>\studio.log
+node <workdir>\archive-log.cjs --file <该机>\studio.log
 # 2) 升级插件（各机看门狗自行拉起）
-npm.cmd pack --ignore-scripts --cache D:\dsh\.npm-cache      # 产出 dsh-agent-room-0.1.41.tgz
-#    （或用已上传的 tarball：/home/ubuntu/studio-files/dsh-agent-room-0.1.41.tgz）
+npm.cmd pack --ignore-scripts --cache <workdir>\.npm-cache      # 产出 dsh-agent-room-0.1.41.tgz
+#    （或用已上传的 tarball：/path/to/studio-files/dsh-agent-room-0.1.41.tgz）
 # 3) 升级后观测自证日志：同一 seq 只应出现一次 woken，其余为 skipped
 type <该机>\studio.log | findstr /C:"woken seq=" /C:"skipped seq="
 # 4) 看计数器（wake.regressed 必须长期为 0）
@@ -344,22 +344,22 @@ curl -s http://127.0.0.1:3080/agent-room-api/state
 **备份路径（改动前已落盘，绝对路径）**
 
 ```
-D:\dsh\_old-service-0.1.40.ts          （git HEAD 0c92533 的 src/host/service.ts，OLD 侧证据来源）
+<workdir>\_old-service-0.1.40.ts          （git HEAD 0c92533 的 src/host/service.ts，OLD 侧证据来源）
 C:\studio\dsh-agent-room-0.1.40.tgz    （上一版插件包；若本机无此文件，用 git HEAD 重新 build 即可）
 ```
 
 **回滚命令**
 
 ```powershell
-$repo = (Resolve-Path 'D:\dsh\ITPM\*\dsh-agent-room').Path
+$repo = (Resolve-Path '<workdir>\\*\dsh-agent-room').Path
 git -C $repo checkout -- src/host/service.ts package.json
 Remove-Item "$repo\src\host\wake.ts","$repo\lib\host\wake.js" -Force
 Remove-Item "$repo\test\wake.test.mjs" -Force
 node "$repo\build.mjs"
 ```
 
-**回滚后校验**：`node D:\dsh\_repro-wake-plane-0.1.41.mjs` 会回到「NEW 侧没有 `lib/host/wake.js`」⇒ 脚本 FATAL 退出码 2
-（这是**正确**的失败方式：规则不存在时不假装通过）；`node D:\dsh\ITPM\*\dsh-agent-room\test\wake.test.mjs` 同样无法加载。
+**回滚后校验**：`node <workdir>\_repro-wake-plane-0.1.41.mjs` 会回到「NEW 侧没有 `lib/host/wake.js`」⇒ 脚本 FATAL 退出码 2
+（这是**正确**的失败方式：规则不存在时不假装通过）；`node <workdir>\\*\dsh-agent-room\test\wake.test.mjs` 同样无法加载。
 
 **回滚不了的部分**：① 已经写进各机 session 转写的 18 次历史唤醒记录（不可逆，也不需要逆）；
 ② 已经排进 agent 收件箱（`next-turn`，持久化）的旧唤醒在被 claim 之前仍在队列里，回滚不会撤回它们；

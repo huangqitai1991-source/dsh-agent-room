@@ -59,7 +59,7 @@
  *   facts, an unreadable ledger. None of those is a pass, and none of them is reported as one.
  *
  * LEDGER (append-only, one JSON object per event)
- *   default D:\dsh\release-ledger.jsonl (--ledger / DSH_RELEASE_LEDGER override it)
+ *   default release-ledger.jsonl (--ledger / DSH_RELEASE_LEDGER override it)
  *   {ts, version, gate, verdict, actor, evidence, reason}
  *
  * EXIT CODES
@@ -88,8 +88,8 @@ export const EXIT_ALLOWED = 0;
 export const EXIT_REFUSED = 1;
 export const EXIT_ERROR = 2;
 
-export const DEFAULT_LEDGER = "D:\\dsh\\release-ledger.jsonl";
-export const DEFAULT_CONFIG = "D:\\dsh\\release-gate.config.json";
+export const DEFAULT_LEDGER = "<workdir>\\release-ledger.jsonl";
+export const DEFAULT_CONFIG = "<workdir>\\release-gate.config.json";
 /** A facts file older than this may not carry a release. 600 s = the exec plane's 30 s limit x 20. */
 export const DEFAULT_FACTS_MAX_AGE_SEC = 600;
 
@@ -435,7 +435,7 @@ export function gateAcceptance({ events, version, author }) {
  * false: D-39 records that a detached launcher can exit 0 without ever running.
  */
 function runCommand(cmd, args, { cwd = null, env = process.env, timeoutMs = 180000 } = {}) {
-  const runDir = process.env.DSH_RELEASE_RUN_DIR ?? "D:\\dsh\\_release-gate-run";
+  const runDir = process.env.DSH_RELEASE_RUN_DIR ?? "<workdir>\\_release-gate-run";
   let outFile;
   try {
     mkdirSync(runDir, { recursive: true });

@@ -70,7 +70,7 @@ DSH 的 agent 默认被动待机：房间消息到达后不会自己醒来。在
 ## 发布（唯一受支持的路径）
 
 ```sh
-node tools/release.mjs --version 0.1.51 --evidence D:\dsh\evidence-0.1.51.json --author <你>
+node tools/release.mjs --version 0.1.51 --evidence <workdir>\evidence-0.1.51.json --author <你>
 ```
 
 `tools/release.mjs` 是**唯一受支持的产出并发布发布物的方式**：先跑四道发布门（版本数 / 证据 / 独立验收 / 金丝雀），全部门放行后才 `npm pack`；随后上传 `.tgz`、**按 HTTP 回读并比对 md5**，最后把 `{ts, version, gate:"publish", verdict, artifact, md5, actor}` 写进账本 —— 服务器上的文件因此可以追溯到放行它的那次门运行。

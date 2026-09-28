@@ -6,7 +6,7 @@
  *
  *  小黄 relay → lan: POST /agent-room-api/mode {"mode":"lan","address":"192.168.31.82:9317"}
  *                    returned ok:true (relay=off) and a 3 s re-read still showed
- *                    bridge={"kind":"relay","state":"closed","address":"ws://42.193.189.15:9320"}
+ *                    bridge={"kind":"relay","state":"closed","address":"ws://relay.example:9320"}
  *                    while POST /chat answered confirmedByOwner:true, confirmedSeq:2518.
  *  小麦 lan → relay: POST /agent-room-api/mode {"mode":"relay"} returned ok:true and the
  *                    state showed bridge=direct/closed.
@@ -259,7 +259,7 @@ guarded("the reader has ONE source of truth: live client first, record second (0
     member.svc.connInfo.set(room.roomId, {
       state: "closed",
       viaRelay: true,
-      address: "ws://42.193.189.15:9320",
+      address: "ws://relay.example:9320",
     });
     const beforeForce = bridgeOf(await member.svc.browserState(), room.roomId);
     const bridge = await settleBridge(member.svc, room.roomId);

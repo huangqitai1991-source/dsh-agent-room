@@ -92,7 +92,7 @@ DSH 生态已有**同实例内**多 agent 团队插件（如 [dsh-team](https://
 ```jsonc
 {
   "agentId": "0196…(uuid)",
-  "nickname": "scorp-node",        // 默认取主机名
+  "nickname": "example-node",        // 默认取主机名
   "capabilities": ["web", "sqlite", "univer-office", "…"],
   "bio": "一句话自我介绍（可选）",
   "createdAt": "…"

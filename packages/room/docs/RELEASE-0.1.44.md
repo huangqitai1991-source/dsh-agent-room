@@ -75,12 +75,12 @@ helper 又在一个空房间列表上赛跑（`rooms after upgrade: 0`、`AUTO-W
 | `package.json` | 版本 0.1.43 → 0.1.44 |
 | `lib/**` | 由 `node build.mjs` 重生成 |
 | `docs/RELEASE-0.1.44.md` | 本文件 |
-| （脚本，不在包内）`D:\dsh\upgrade-studio.ps1` | 新增步骤 **1c**：把 `listening-capture.cjs` 写到 `$Work` 并运行（`--base --out-dir $Work`）；步骤 **9c** 改传 `--before-file "$Work\before-listening.json"` |
-| （脚本，不在包内）`D:\dsh\upgrade-studio.sh` | 同上（位置参数平台；`write_listening_capture_helper` + 1c/9c） |
-| （脚本，不在包内）`D:\dsh\listening-capture.cjs` | **新增**：读运行中的 `/state`，写 `before-listening.json`（给 9c 核对）+ `dataDir/listening.json`（给下一次 boot 恢复）；**只增不减**、只读不写开关、读失败 fail-soft 且显式报错 |
-| （脚本，不在包内）`D:\dsh\auto-wake.cjs` | 新增 `--before-file` 基线模式：只对「升级前在监听」的房间动作；**自有房间不 POST**、未自行恢复则失败；无基线时退回 0.1.42 的修复语义并**显式警告** |
-| （校验，不在包内）`D:\dsh\_check-listening-capture.cjs` | 新增门禁：两个脚本内嵌的 helper **逐字节相同**且等于独立文件、纯 ASCII、可解析；1c **恰好出现一次**（生成器幂等）；1c 在「Stop dsh web / Install」**之前**；9c 真的传了 `--before-file` |
-| （校验，不在包内）`D:\dsh\_test-listening-capture-0144.cjs` | 新增：把两个 helper 对着 stub host 真跑一遍（A–I 共 44 条断言），含「坏基线 ⇒ 自有房间不被救且 exit 1」 |
+| （脚本，不在包内）`<workdir>\upgrade-studio.ps1` | 新增步骤 **1c**：把 `listening-capture.cjs` 写到 `$Work` 并运行（`--base --out-dir $Work`）；步骤 **9c** 改传 `--before-file "$Work\before-listening.json"` |
+| （脚本，不在包内）`<workdir>\upgrade-studio.sh` | 同上（位置参数平台；`write_listening_capture_helper` + 1c/9c） |
+| （脚本，不在包内）`<workdir>\listening-capture.cjs` | **新增**：读运行中的 `/state`，写 `before-listening.json`（给 9c 核对）+ `dataDir/listening.json`（给下一次 boot 恢复）；**只增不减**、只读不写开关、读失败 fail-soft 且显式报错 |
+| （脚本，不在包内）`<workdir>\auto-wake.cjs` | 新增 `--before-file` 基线模式：只对「升级前在监听」的房间动作；**自有房间不 POST**、未自行恢复则失败；无基线时退回 0.1.42 的修复语义并**显式警告** |
+| （校验，不在包内）`<workdir>\_check-listening-capture.cjs` | 新增门禁：两个脚本内嵌的 helper **逐字节相同**且等于独立文件、纯 ASCII、可解析；1c **恰好出现一次**（生成器幂等）；1c 在「Stop dsh web / Install」**之前**；9c 真的传了 `--before-file` |
+| （校验，不在包内）`<workdir>\_test-listening-capture-0144.cjs` | 新增：把两个 helper 对着 stub host 真跑一遍（A–I 共 44 条断言），含「坏基线 ⇒ 自有房间不被救且 exit 1」 |
 
 **明确没做**：
 
@@ -93,14 +93,14 @@ helper 又在一个空房间列表上赛跑（`rooms after upgrade: 0`、`AUTO-W
 ## 5. 发布门禁：先量新构建，再量**旧构建**（哪一侧、哪个版本，全部写明）
 
 ```powershell
-PS> powershell -File D:\dsh\_fix-d28\run-gate-0144.ps1
+PS> powershell -File <workdir>\_fix-d28\run-gate-0144.ps1
 ```
 
 **OLD 侧 = 0.1.43 的真构建**（`dsh-agent-room-0.1.43.tgz` 解包，md5 `430ece8f9b5b6b962f622ae99ab81a20`，
 车队当晚就是用这个包升的）。它的 `lib/host/service.js:855` 就是 D-28 那句
 `if (this.roomService.getOwnedRoom(roomId)) {`。
 
-**第三个对照侧 = 车队当前实际部署的那份**：`C:\Users\scorp\.dsh\profiles\web\node_modules\dsh-agent-room`
+**第三个对照侧 = 车队当前实际部署的那份**：`<home>\.dsh\profiles\web\node_modules\dsh-agent-room`
 （**只读**，本版从未写入该路径）。
 
 > **必须纠正一处前提**：交办说明里把这一侧称作「部署的 0.1.43」。**实测不是**——
@@ -108,7 +108,7 @@ PS> powershell -File D:\dsh\_fix-d28\run-gate-0144.ps1
 > 且 `lib` 里**没有** `restoreListening` / `listeningFile`（0.1.42 才引入）。
 > 拿它当 OLD 会把新断言判成「失败」——但理由是**0.1.41 根本没持久化**，
 > 不是 D-28 的「跳过自有房间」。所以本版门禁以 **0.1.43** 为主 OLD，并**同时**量 0.1.41 作对照，
-> 两侧都写在日志里（`D:\dsh\_fix-d28\gate-0144-full.txt`）。
+> 两侧都写在日志里（`<workdir>\_fix-d28\gate-0144-full.txt`）。
 
 ### 5.1 逐套件：NEW | OLD(0.1.43) | DEPLOYED(0.1.41)
 
@@ -136,9 +136,9 @@ AssertionError [ERR_ASSERTION]: the restore must not skip rooms with `continue` 
 ### 5.2 升级脚本侧的门禁（不进包，但同样要"新断言在旧脚本上失败"）
 
 ```powershell
-PS> node D:\dsh\_check-listening-capture.cjs     # RESULT: PASS
-PS> node D:\dsh\_check-auto-wake-0142.cjs        # RESULT: PASS（448 行 helper 两侧逐字节一致）
-PS> node D:\dsh\_test-listening-capture-0144.cjs # SUITE listening-capture: 44/44 checks passed, 0 failure(s)
+PS> node <workdir>\_check-listening-capture.cjs     # RESULT: PASS
+PS> node <workdir>\_check-auto-wake-0142.cjs        # RESULT: PASS（448 行 helper 两侧逐字节一致）
+PS> node <workdir>\_test-listening-capture-0144.cjs # SUITE listening-capture: 44/44 checks passed, 0 failure(s)
 ```
 
 `_check-listening-capture.cjs` 里有两条**针对本版新发现的自身缺陷**的断言（见 §5.3）：
@@ -180,7 +180,7 @@ PS> node D:\dsh\_test-listening-capture-0144.cjs # SUITE listening-capture: 44/4
 | `stale-room.test.mjs` | pass 3 / fail 0 | pass 3 / fail 0 |
 | `wake-duplicate.test.mjs` | pass 6 / fail 0 | pass 6 / fail 0 |
 
-**合计 19 套件 / 117 pass / 0 fail**（`D:\dsh\_fix-d28\suites-0144.txt`），全部退出码 0、
+**合计 19 套件 / 117 pass / 0 fail**（`<workdir>\_fix-d28\suites-0144.txt`），全部退出码 0、
 全部自然退出（最慢 `listening` 15.8 s，其次 `backfill.e2e` 8.9 s）。
 与 0.1.43 的 18 套件 / 116 pass 相比：套件数 +1（0.1.43 的表里把 `listening` 记成 6 条、
 `bridge-state` 记成 A 线复核，本版按**实跑**重新点了一遍），`listening` 从 6 条变 7 条（自有房间恢复拆成两条独立断言），
@@ -188,7 +188,7 @@ PS> node D:\dsh\_test-listening-capture-0144.cjs # SUITE listening-capture: 44/4
 
 `npx tsc --noEmit` 干净（exit 0）；`node build.mjs` 成功（`built lib/host/*, lib/client.js, lib/skills/`）。
 
-> 运行时 stderr 仍有一行 `[agent-room] backup root C:\Users\scorp\identity-backups is NOT writable (EPERM …)`：
+> 运行时 stderr 仍有一行 `[agent-room] backup root <home>\identity-backups is NOT writable (EPERM …)`：
 > 本会话文件沙箱不允许写工作区之外，属 0.1.38 既有行为（拒写而不是覆盖），与本版改动无关。
 
 ## 7. 真机现场验证（本版唯一与 0.1.43 不同的地方：这一版**真的上过机器**）
@@ -197,7 +197,7 @@ PS> node D:\dsh\_test-listening-capture-0144.cjs # SUITE listening-capture: 44/4
 
 任务前状态：0.1.43、意图文件**已存在**（`{"rooms":["01a098a2-..."]}`）、`listening=true`。
 动作：`launchctl submit` 起一个独立于 exec 作业的小脚本，杀掉 3080 的 LISTEN 进程（`lsof -ti tcp:3080 -sTCP:LISTEN`），
-等看门狗把服务拉起来，再读状态。原始输出（`D:\dsh\_fix-d28\test1-xiaohuang.mjs`，全文见 `test1-read-final.txt`）：
+等看门狗把服务拉起来，再读状态。原始输出（`<workdir>\_fix-d28\test1-xiaohuang.mjs`，全文见 `test1-read-final.txt`）：
 
 ```
 BEFORE_STATE=room=0.1.43 org=0.2.12 listening=true bridge=relay/open rooms=1
@@ -226,7 +226,7 @@ VERDICT=RESTORED_BY_ITSELF
 
 ```
 === [1c] Persist the listening intent BEFORE the swap (0.1.44 / D-28) ===   ← 出现两次
-LISTENING-CAPTURE: listening intent written to C:\Users\46157\.dsh\agent-room\listening.json
+LISTENING-CAPTURE: listening intent written to <home>\.dsh\agent-room\listening.json
   -> {"rooms":["01a098a2-2015-7a1d-b5f7-9eca45afa65d"]}
   port 3080 owner before restart: 3740  →  port 3080 owner after restart : 6016   （真重启）
 AUTO-WAKE: baseline from the pre-upgrade snapshot: 1 room(s) were listening before the upgrade
@@ -241,7 +241,7 @@ AUTO-WAKE FAILED: 1 room(s) muted ... (OWNED room, listening before the upgrade,
 **随后做的两件事（都要写明白）**：
 1. 我把脚本自身的「步骤插两次」缺陷修掉并加了幂等断言（§5.3），重新上传并让她的机器重新下载（`STEP_1C_COUNT=1`）；
 2. 我用**她本机部署的那份 0.1.44 代码**、对着**她本机数据目录的副本**在本机流程里跑了两次 boot
-   （端口 0 与端口 3080 各一次，原始输出 `D:\dsh\_fix-d28\probe-boot-final.txt` / `probe-boot-port3080.txt`）：
+   （端口 0 与端口 3080 各一次，原始输出 `<workdir>\_fix-d28\probe-boot-final.txt` / `probe-boot-port3080.txt`）：
 
 ```
 BOOT_RESOLVED
@@ -264,7 +264,7 @@ LISTENING-CAPTURE: listening intent written to ... listening.json -> {"rooms":["
   port 3080 owner before restart: 6016  →  port 3080 owner after restart : 13764 （真重启，本机 09:02:27）
   port 3080 listening: True after 4s
   ERROR: the new supervisor REFUSED to start - something else is already supervising this machine
-         [studio] ALREADY-RUNNING pid=17312 holds C:\Users\46157\AppData\Local\Temp\studio-watchdog.lock
+         [studio] ALREADY-RUNNING pid=17312 holds <home>\AppData\Local\Temp\studio-watchdog.lock
   （脚本在第 8 步即可退出 exit 1 ⇒ 9c Auto-wake 这一步【根本没有执行】）
 AUTO-WAKE lines in upg.out.log: (none)
 重启后 /state: room=0.1.44 owned=true listening=true status=open bridge=relay/open   ✓
@@ -298,8 +298,8 @@ AUTO-WAKE lines in upg.out.log: (none)
 IDENTIFY 2026-09-15T02:06:00.225Z
 LISTENERS=[{"local":"127.0.0.1:3080","pid":"13764"}]
   pid=13764 exe=node isDsh=true isShell=false
-    cmdline="node"   "C:\\Users\\46157\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" web --no-open
-WATCHDOG=["cmd.exe" /c C:\Users\46157\studio\start-studio.cmd]
+    cmdline="node"   "<home>\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" web --no-open
+WATCHDOG=["cmd.exe" /c <home>\studio\start-studio.cmd]
 GATES=[["one listener",true],["listener is dsh web",true],["listener is not a shell/wrapper",true],["watchdog present",true]]
 ```
 
@@ -307,7 +307,7 @@ GATES=[["one listener",true],["listener is dsh web",true],["listener is not a sh
 （`isDsh` / `isShell` 两个标志），**没有任何按子串筛进程的匹配**；四道闸任一不过就**拒绝动手**（脚本里 `REFUSED_TO_KILL`）。
 看门狗在场 ⇒ 误杀可恢复。
 
-**结果**（原始：`D:\dsh\_fix-d28\test2-restart-verdict.txt`）：
+**结果**（原始：`<workdir>\_fix-d28\test2-restart-verdict.txt`）：
 
 ```
 KILL pid=13764 exe=node      （只杀这一个）
@@ -341,7 +341,7 @@ VERDICT=RESTORED_BY_ITSELF
 （它那边的 `listening=false` 与"意图文件是否存在"正是它要观察的量）。
 所以这一轮既不能算我的证据，也可能污染它的现场。
 
-保留原始输出备查（`D:\dsh\_fix-d28\test3-*.txt`），但**结论一律不引用**：
+保留原始输出备查（`<workdir>\_fix-d28\test3-*.txt`），但**结论一律不引用**：
 `[1c] listening intent written to ...` / `3080 owner 3640 → 12472` / `listening=true` /
 `1 of 1 room(s) ... BY THEMSELVES (no POST from this script)` —— 这些字面上都发生过，
 但**发生在不该由我动的机器上**，按纪律作废。
@@ -367,12 +367,12 @@ VERDICT=RESTORED_BY_ITSELF
    与"一台旧版本机器第一次升上来"的形状完全一致；
 2. 用**修好的脚本**（`C:\studio`，`-RoomVer 0.1.44 -OrgVer 0.2.12`，detached + 轮询）升级。
 
-原始输出（`D:\dsh\_fix-d28\test3-read1.txt` / `test3-final.txt`）：
+原始输出（`<workdir>\_fix-d28\test3-read1.txt` / `test3-final.txt`）：
 
 ```
 === [1c] Persist the listening intent BEFORE the swap (0.1.44 / D-28) ===
 LISTENING-CAPTURE: snapshot written to C:\studio\before-listening.json (1 listening room(s) in it, 0 of them owned here)
-LISTENING-CAPTURE: listening intent written to C:\Users\Administrator\.dsh\agent-room\listening.json
+LISTENING-CAPTURE: listening intent written to <home>\.dsh\agent-room\listening.json
   -> {"rooms":["01a098a2-2015-7a1d-b5f7-9eca45afa65d"]}
 === [8] Restart dsh web ===
   port 3080 owner before restart: 3640  →  port 3080 owner after restart : 12472 （真重启）
@@ -455,42 +455,42 @@ AUTO_WAKE_EXIT=0
 
 ```powershell
 # 房间侧门禁（三侧对照：NEW / 0.1.43 / 部署的 0.1.41）
-powershell -File D:\dsh\_fix-d28\run-gate-0144.ps1
-#   原始日志 D:\dsh\_fix-d28\gate-logs-0144-run2\  汇总 D:\dsh\_fix-d28\gate-0144-full.txt
+powershell -File <workdir>\_fix-d28\run-gate-0144.ps1
+#   原始日志 <workdir>\_fix-d28\gate-logs-0144-run2\  汇总 <workdir>\_fix-d28\gate-0144-full.txt
 
 # 脚本侧门禁
-node D:\dsh\_check-listening-capture.cjs
-node D:\dsh\_check-auto-wake-0142.cjs
-node D:\dsh\_test-listening-capture-0144.cjs
-node D:\dsh\_refresh-d28-embed.cjs      # 幂等：连跑三次，两个脚本字节不变
+node <workdir>\_check-listening-capture.cjs
+node <workdir>\_check-auto-wake-0142.cjs
+node <workdir>\_test-listening-capture-0144.cjs
+node <workdir>\_refresh-d28-embed.cjs      # 幂等：连跑三次，两个脚本字节不变
 
 # 全量套件（逐个直跑）
-powershell -File D:\dsh\_fix-d28\run-suites-0144.ps1   # 日志 D:\dsh\_fix-d28\suite-logs-0144\
+powershell -File <workdir>\_fix-d28\run-suites-0144.ps1   # 日志 <workdir>\_fix-d28\suite-logs-0144\
 
 # 她那一台的数据形状在本机复现（自有房间 + 空 joined.json + 意图文件）
-node D:\dsh\ITPM\...\dsh-agent-room\test\_repro-d28-owner-boot.mjs
+node <workdir>\\...\dsh-agent-room\test\_repro-d28-owner-boot.mjs
 
-# 三台真机的现场脚本（原始输出一律落在 D:\dsh\_fix-d28\）
-node D:\dsh\_fix-d28\test1-xiaohuang.mjs  --phase=measure      # 小黄（macOS，成员）
-node D:\dsh\_fix-d28\test2-xiaoting.mjs   --phase=read         # 小婷（Windows，房主）
-node D:\dsh\_fix-d28\test3-xiaojie.mjs    --phase=read         # 小捷（Windows，成员，自举样本）
-node D:\dsh\_fix-d28\test3-verify.mjs     --phase=autowake     # 9c 自检步逐字补跑
+# 三台真机的现场脚本（原始输出一律落在 <workdir>\_fix-d28\）
+node <workdir>\_fix-d28\test1-xiaohuang.mjs  --phase=measure      # 小黄（macOS，成员）
+node <workdir>\_fix-d28\test2-xiaoting.mjs   --phase=read         # 小婷（Windows，房主）
+node <workdir>\_fix-d28\test3-xiaojie.mjs    --phase=read         # 小捷（Windows，成员，自举样本）
+node <workdir>\_fix-d28\test3-verify.mjs     --phase=autowake     # 9c 自检步逐字补跑
 ```
 
-tarball：`dsh-agent-room-0.1.44.tgz`（`npm.cmd pack --ignore-scripts --cache D:\dsh\.npm-cache`）。
-name / size / md5 见 `D:\dsh\_fix-d28\_release-0.1.44-artifact.txt` 与上传后的 `ls -l` + `md5sum` 复核——
+tarball：`dsh-agent-room-0.1.44.tgz`（`npm.cmd pack --ignore-scripts --cache <workdir>\.npm-cache`）。
+name / size / md5 见 `<workdir>\_fix-d28\_release-0.1.44-artifact.txt` 与上传后的 `ls -l` + `md5sum` 复核——
 **tarball 无法自述自身的 md5**，故不写进本文件（避免「改了 md5 就得重打包」的循环）。
 打包前已用 `tar -tzf` 证明包里**没有**任何暂存路径（42 个条目，`lib-old|_probe|_fix-d28|old-0.1|.bak|scratch` 命中数 = 0）。
 
 ## 9. 上线与回滚
 
-**上线**（各机自己执行）：升级脚本已随本版更新并上传到 `http://42.193.189.15:8090/`
+**上线**（各机自己执行）：升级脚本已随本版更新并上传到 `http://your-host:8090/`
 （`upgrade-studio.ps1` 86901 B / `upgrade-studio.sh` 75059 B / `listening-capture.cjs` 12861 B / `auto-wake.cjs` 19805 B）。
 各机**先把自己的 `upgrade-studio.*` 换成 8090 上的这一份**（脚本不在插件包里，不换脚本就没有 1c 步骤），再升级。
 
 ```powershell
 # 1) 换脚本（Windows）
-Invoke-WebRequest http://42.193.189.15:8090/upgrade-studio.ps1 -OutFile C:\Users\<你>\studio\upgrade-studio.ps1 -UseBasicParsing
+Invoke-WebRequest http://your-host:8090/upgrade-studio.ps1 -OutFile C:\Users\<你>\studio\upgrade-studio.ps1 -UseBasicParsing
 # 2) 升级插件（各机看门狗自行拉起；-RoomVer 0.1.44 -OrgVer 0.2.12）
 # 3) 升级后读状态：自有房间也必须 listening=true
 curl -s http://127.0.0.1:3080/agent-room-api/state
@@ -510,10 +510,10 @@ curl -s http://127.0.0.1:3080/agent-room-api/state
 **回滚命令**
 
 ```powershell
-$repo = (Resolve-Path 'D:\dsh\ITPM\*\dsh-agent-room').Path
+$repo = (Resolve-Path '<workdir>\\*\dsh-agent-room').Path
 git -C $repo revert --no-edit <本版提交 hash>
 node "$repo\build.mjs"
-# 脚本侧同时回滚：把 upgrade-studio.ps1 换回 D:\dsh\_fix-d28\upgrade-studio.ps1.bak-0143
+# 脚本侧同时回滚：把 upgrade-studio.ps1 换回 <workdir>\_fix-d28\upgrade-studio.ps1.bak-0143
 #   （1c 步骤与基线核对会一起消失，Auto-wake 退回 0.1.43 的"打开一切并报成功"）
 ```
 
@@ -529,7 +529,7 @@ chat 自测 `confirmedByOwner:true`）。所以下面这段**不是"必须做的
 ```powershell
 # —— 小麦 kiki：0.1.44 升级 / 复核（工作目录是 C:\studio）——
 # 0) 先看现在是什么版本（已经 0.1.44 就不必再跑升级）
-(Get-Content C:\Users\Administrator\.dsh\profiles\web\node_modules\dsh-agent-room\package.json -Raw | ConvertFrom-Json).version
+(Get-Content <home>\.dsh\profiles\web\node_modules\dsh-agent-room\package.json -Raw | ConvertFrom-Json).version
 
 # 1) 确认升级脚本是最新修订（必须能搜到 step "1c"，否则先换成 8090 上的那份）
 $sh = "C:\studio\upgrade-studio.ps1"
@@ -538,13 +538,13 @@ $sh = "C:\studio\upgrade-studio.ps1"
 # 2) 跑升级（具名参数；-Work 是它自己的工作目录）
 Start-Process powershell -ArgumentList @(
   '-NoProfile','-ExecutionPolicy','Bypass','-File', $sh,
-  '-Server','42.193.189.15','-Port','8090','-RoomVer','0.1.44','-OrgVer','0.2.12','-Work','C:\studio'
+  '-Server','your-host','-Port','8090','-RoomVer','0.1.44','-OrgVer','0.2.12','-Work','C:\studio'
 ) -RedirectStandardOutput C:\studio\upg.out.log -RedirectStandardError C:\studio\upg.err.log
 
 # 3) 等它跑完（约 1 分钟），然后看这四样
 Get-Content C:\studio\upg.out.log -Tail 40
 curl.exe -s http://127.0.0.1:3080/agent-room-api/state     # 期望 listening=true
-Get-Content C:\Users\Administrator\.dsh\agent-room\listening.json
+Get-Content <home>\.dsh\agent-room\listening.json
 #   升级日志里应该看到：[1c] LISTENING-CAPTURE 两行 + [8] 换了 PID
 #   如果最后是 "the new supervisor REFUSED to start" + exit 1：**那是 D-33，不是升级失败** ——
 #   看它上面两行：只要 "port 3080 owner after restart" 是**新 PID**、且 state 里 listening=true，升级就是成功的。
@@ -566,9 +566,9 @@ node C:\studio\auto-wake.cjs --base http://127.0.0.1:3080 --timeout-ms 5000 --re
 5. **不要动 `C:\studio\start-studio.cmd`**：它是看门狗（升级脚本自己会保留它）。
    本次我在这台机器上**只删了自己造的临时文件**（36 个 `d28-*` / `upgrade-launch-0144*` / `upgrade-runner.js` /
    `upg.*` / `before-listening.json` / `upgrade-studio.ps1.bak-before-0144`），并删掉了一个**坏的**计划任务
-   `\DSHUpgrade0143`（它的目标 `C:\Users\Administrator\studio\upg-launch.cmd` 指向一份**不存在**的
-   `C:\Users\Administrator\studio\upgrade-studio.ps1`，上次结果 = 1）。
-   **我没有删** `C:\Users\Administrator\studio\upg-launch.cmd` 本身（那是别人放的文件，是否清理由人决定）。
+   `\DSHUpgrade0143`（它的目标 `<home>\studio\upg-launch.cmd` 指向一份**不存在**的
+   `<home>\studio\upgrade-studio.ps1`，上次结果 = 1）。
+   **我没有删** `<home>\studio\upg-launch.cmd` 本身（那是别人放的文件，是否清理由人决定）。
 
 ## 10. 本版**没有**验证 / 主动排除的部分（如实列出）
 
@@ -589,7 +589,7 @@ node C:\studio\auto-wake.cjs --base http://127.0.0.1:3080 --timeout-ms 5000 --re
    —— 按现在的口径那是小麦，而它不由本版发布者动。**特别是"0.1.40 的 `/state` 是否带 `listening` 字段"从未在真机验证过** ✗，
    这一条不成立的话，1c 在 0.1.40 上会捕获到空集合（会打印 `NO room is listening ...` 而不是撒谎，但不能算自举成功）。
 4. **`listening-capture.cjs` 的 CLI 入口在小捷上是脚本内嵌版跑的**（步骤 1c 本身就是 CLI 调用，`exit 0` + 写出两个文件）；
-   但**独立文件**那份只在本机 PowerShell 里直跑验过（`D:\dsh\_fix-d28\cli-capture.txt` / `cli-autowake.txt`）。
+   但**独立文件**那份只在本机 PowerShell 里直跑验过（`<workdir>\_fix-d28\cli-capture.txt` / `cli-autowake.txt`）。
    本会话沙箱**禁止** Node 子进程用管道 stdio（实测 `spawnSync` → `EPERM`），
    所以套件内的 CLI 断言被改成"导出面"断言，并在用例 J 里写明原因。
 5. **macOS 那一侧的升级脚本改动没在 macOS 上跑过**：小黄这台**没有升级**（只做了裸重启，且据交办它那一轮的

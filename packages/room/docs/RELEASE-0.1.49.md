@@ -26,7 +26,7 @@ USER:: 你在房间「K family」…消息：KEVINKIKI 说：「【0.1.48 现场
        'http://127.0.0.1:3080/agent-room-api/rooms/…/chat' …
 HEADER {"config":{"provider":"deepseek-official","model":"deepseek-v4-flash",…}}     ← 模型在，回合真的起来了
 TOOLRESULT Error: Windows ACL temp root must be outside the workspace:
-           workspace=C:\Users\Administrator; temp=C:\Users\Administrator\AppData\Local\Temp
+           workspace=<home>; temp=<home>\AppData\Local\Temp
 ASSISTANT reason="…the shell tool is unusable. I have no room_send tool. …escalate with sandbox_permissions?"
 APPROVAL/ASKED {"toolName":"pwsh","reason":"escalate sandbox to danger-full-access: The sandboxed shell cannot start
                 at all (its Windows ACL temp root check fails because TEMP sits inside the workspace) …"}
@@ -56,7 +56,7 @@ function assertTempRootOutsideWorkspace(workspaceRoot, tempRoot) {
 cwd: process.env.AGENT_ROOM_WORKDIR ?? homedir(),      // ← 0.1.49 的根因本体
 ```
 
-小麦：`workspace=C:\Users\Administrator`，`temp=C:\Users\Administrator\AppData\Local\Temp` ⇒ **包含** ⇒ 抛。
+小麦：`workspace=<home>`，`temp=<home>\AppData\Local\Temp` ⇒ **包含** ⇒ 抛。
 
 ### 1.3 同机对照实验（唯一变量是工作区）
 
@@ -179,7 +179,7 @@ npx tsc --noEmit 无输出；node build.mjs → built lib/host/*, lib/client.js,
 
 ```
   [ws] default=<DSH_HOME>\agent-room\duty-workspace source=default (DSH_HOME/agent-room/duty-workspace) temp=…
-  [ws] win32 guard active: rejected=["C:\\Users\\scorp\\AppData\\Local\\Temp"]
+  [ws] win32 guard active: rejected=["<home>\\AppData\\Local\\Temp"]
   [ws] last resort=<os.tmpdir()>\dsh-agent-room-duty (safe by construction)
   [host-ws] cwd=…\ar49-dsh-efSTxa\agent-room\duty-workspace rejected=1
   [ws-session] header cwd read = C:\Users\…\AppData\Local\Temp
@@ -203,14 +203,14 @@ npx tsc --noEmit 无输出；node build.mjs → built lib/host/*, lib/client.js,
 ## 7. 交付物与复现入口
 
 ```powershell
-$REPO = "D:\dsh\ITPM\数创港项目\dsh-agent-room"
-$GATE = "D:\dsh\_fix-47\gate-wake-activation.mjs"
+$REPO = "C:\work\项目\dsh-agent-room"
+$GATE = "<workdir>\_fix-47\gate-wake-activation.mjs"
 cd $REPO; npx tsc --noEmit; node build.mjs
 node $GATE "$REPO\lib"                                    # 期望 19/19 exit 0
 Get-ChildItem test\*.test.mjs, test\*.e2e.mjs | ForEach-Object { node $_.FullName }
 node test\duty-model.test.mjs                             # 期望 17 pass / 0 fail
 # 现场对照实验（同一台机、唯一变量=工作区）：
-#   node exp-sandbox.mjs / exp-reply.mjs  ← 见 D:\dsh\_rollout-0148\（诊断脚本，不进包）
+#   node exp-sandbox.mjs / exp-reply.mjs  ← 见 <workdir>\_rollout-0148\（诊断脚本，不进包）
 ```
 
 ---
@@ -220,7 +220,7 @@ node test\duty-model.test.mjs                             # 期望 17 pass / 0 f
 ```powershell
 # 成员机（先停服务再装；升级启动器必须 NON-detached + stdio 落文件，见 D-39）
 powershell -NoProfile -ExecutionPolicy Bypass -File "<studio>\upgrade-studio.ps1" -RoomVer 0.1.49 -OrgVer 0.2.12
-# macOS：/bin/sh "<studio>/upgrade-studio.sh" 42.193.189.15 8090 0.1.49 0.2.12
+# macOS：/bin/sh "<studio>/upgrade-studio.sh" your-host 8090 0.1.49 0.2.12
 # 升级后四看（GET http://127.0.0.1:3080/agent-room-api/state）：
 #   .activation.residentExecutable ≥ 1 / .residentNoModel 视机器 / .turnErrors = 0 / .acceptedNoOutput 不再增长
 # 日志应出现：resident: session workspace = … [source] / using the host-created session … / duty agent: …
