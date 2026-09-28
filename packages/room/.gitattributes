@@ -1,0 +1,16 @@
+# Line endings are BYTES here, not style.
+#
+# Why this file exists (2026-09-16, found while making the tree reproducible for 0.1.51):
+# `core.autocrlf=true` was set on this machine and there was no .gitattributes, so `git checkout`
+# rewrote text files to CRLF while the published artifacts are compared BY md5:
+#   - `tools/profile-guard.mjs` is served from :8090 and every machine refreshes its helper only when
+#     the downloaded md5 equals the manifest's -- a CRLF rewrite changes that md5 and turns a healthy
+#     fleet update into `the downloaded helper hashes to X, the manifest says Y`;
+#   - the release tarball's own md5 depends on the bytes of lib/**, so "the same commit on two machines"
+#     would produce two different release artifacts.
+# Pinning `eol=lf` makes the working tree byte-identical to what is published, on every machine.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.tgz binary
+*.zip binary

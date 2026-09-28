@@ -1,0 +1,4 @@
+# dsh-agent-room profile layer — inserts the plugin into the loader tree.
+- insert:
+    - id: agent-room
+      name: dsh-agent-room
